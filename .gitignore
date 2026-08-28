@@ -1,0 +1,15 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Python packaging artifacts
+*.egg-info/
+build/
+dist/
+
+# Local operating-system files
+.DS_Store
+
+# Downloaded Unreal runtime assets are installed locally and are not source files
+/gym_rescue/envs/UnrealEnv/
