@@ -133,7 +133,7 @@ class RescueBenchmark:
         
         # 高级配置
         self.render_quality = render_quality
-        self.offscreen = offscreen if not render else False
+        self.offscreen = bool(offscreen)
         self.save_frame_every = max(1, int(save_frame_every))
         self.save_video = bool(save_video)
         self.video_fps = int(video_fps)
