@@ -2,7 +2,7 @@
   "env_name": "SuburbNeighborhood_Day",
   "env_map": "SuburbNeighborhood_Day",
   "env_bin":{
-    "Linux": "Rescue_Linux_1.0.9/Linux/Rescue/Binaries/Linux/Rescue",
+    "Linux": "Rescue_Linux/Linux/Rescue/Binaries/Linux/Rescue",
     "Win": "Rescue_Win64_v1.0.2\\Rescue\\Binaries\\Win64\\Rescue.exe",
     "Mac":  "Rescue_Mac/Rescue.app"
   },
