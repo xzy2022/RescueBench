@@ -245,8 +245,14 @@ class RescueBenchmark:
         levels: List[int] = [2, 3, 4],
         episodes_per_point: int = 1,
         model_name: str = "unknown",
+        point_ids: Optional[List[int]] = None,
     ) -> BenchmarkResult:
-        return self._runner.run_benchmark(levels, episodes_per_point, model_name)
+        return self._runner.run_benchmark(
+            levels,
+            episodes_per_point,
+            model_name,
+            point_ids=point_ids,
+        )
 
 # ---------------------------------------------------------------------------
 # 6. Agent 注册与工厂 — 实现位于 agents.factory（向后兼容 re-export）

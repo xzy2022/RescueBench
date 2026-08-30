@@ -74,6 +74,13 @@ def create_base_parser(
         help="Difficulty levels to evaluate (0-4)",
     )
     parser.add_argument(
+        "--point-ids",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Only evaluate these zero-based test point IDs for each selected level",
+    )
+    parser.add_argument(
         "--episodes",
         type=int,
         default=1,
@@ -357,6 +364,7 @@ def run_benchmark_from_args(
             levels=getattr(args, "levels", [2, 3, 4]),
             episodes_per_point=getattr(args, "episodes", 1),
             model_name=model_name,
+            point_ids=getattr(args, "point_ids", None),
         )
         print(f"\n{'='*60}\n BENCHMARK COMPLETED!\n{'='*60}")
         return result

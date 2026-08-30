@@ -14,14 +14,42 @@ class BenchmarkRunner:
     def __init__(self, benchmark):
         self.benchmark = benchmark
 
-    def build_map_level_schedule(self, levels: List[int]) -> Dict[str, Dict[int, List[int]]]:
+    def build_map_level_schedule(
+        self,
+        levels: List[int],
+        point_ids: Optional[List[int]] = None,
+    ) -> Dict[str, Dict[int, List[int]]]:
         b = self.benchmark
         schedule: Dict[str, Dict[int, List[int]]] = {}
+        selected_point_ids = None
+        if point_ids is not None:
+            selected_point_ids = list(dict.fromkeys(point_ids))
+            negative_ids = [point_id for point_id in selected_point_ids if point_id < 0]
+            if negative_ids:
+                raise ValueError(f"Point IDs must be non-negative: {negative_ids}")
+
         for level in levels:
             points = b.task_loader.load_level_test_points(level)
             if not points:
                 continue
-            for point_id, point in enumerate(points):
+
+            if selected_point_ids is None:
+                level_point_ids = list(range(len(points)))
+            else:
+                invalid_ids = [
+                    point_id
+                    for point_id in selected_point_ids
+                    if point_id >= len(points)
+                ]
+                if invalid_ids:
+                    raise ValueError(
+                        f"Point IDs out of range for Level {level} "
+                        f"(valid: 0-{len(points) - 1}): {invalid_ids}"
+                    )
+                level_point_ids = selected_point_ids
+
+            for point_id in level_point_ids:
+                point = points[point_id]
                 env_id = b.task_loader.resolve_env_id(point.get("env_id", b.env_id))
                 env_schedule = schedule.setdefault(env_id, {})
                 env_schedule.setdefault(level, []).append(point_id)
@@ -131,8 +159,10 @@ class BenchmarkRunner:
         levels: List[int],
         episodes_per_point: int = 1,
         model_name: str = "unknown",
+        point_ids: Optional[List[int]] = None,
     ) -> BenchmarkResult:
         b = self.benchmark
+        point_ids = None if point_ids is None else list(dict.fromkeys(point_ids))
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         b.result_writer.prepare_incremental_result_files(
             model_name,
@@ -142,7 +172,7 @@ class BenchmarkRunner:
         level_metrics_dict: Dict[int, LevelMetrics] = {}
         all_episodes: List[EpisodeMetrics] = []
         episodes_by_level: Dict[int, List[EpisodeMetrics]] = {level: [] for level in levels}
-        schedule = self.build_map_level_schedule(levels)
+        schedule = self.build_map_level_schedule(levels, point_ids=point_ids)
 
         for level in levels:
             if not b.task_loader.get_point_count(level):
@@ -166,14 +196,14 @@ class BenchmarkRunner:
             map_episode_count = 0
             try:
                 for level in scheduled_levels:
-                    point_ids = level_points[level]
-                    if not point_ids:
+                    scheduled_point_ids = level_points[level]
+                    if not scheduled_point_ids:
                         continue
                     level_label = f"{env_id} L{level}"
                     lm, eps = self.evaluate_level(
                         level,
                         episodes_per_point,
-                        point_ids=point_ids,
+                        point_ids=scheduled_point_ids,
                         close_env=False,
                         label=level_label,
                     )
@@ -217,6 +247,7 @@ class BenchmarkRunner:
         }
         config.update(
             levels=levels,
+            point_ids=point_ids,
             episodes_per_point=episodes_per_point,
             dispatch_order="map->level->point",
             scheduled_maps=list(schedule.keys()),
