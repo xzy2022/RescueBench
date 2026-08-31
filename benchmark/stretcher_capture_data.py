@@ -9,7 +9,6 @@ from typing import Any, Iterable, Sequence
 
 from benchmark.teleport_probe_data import (
     DEFAULT_RESOLUTION,
-    DEFAULT_SAMPLE_DELAYS,
     TIME_LIMITS,
     ProbeError,
     RenderSettings,
@@ -17,34 +16,42 @@ from benchmark.teleport_probe_data import (
     load_level_points,
     load_task_selection,
     validate_resolution,
-    validate_sample_delays,
 )
 
-DEFAULT_CAPTURE_DISTANCE_UU = 200.0
+DEFAULT_CAPTURE_DISTANCES_UU = (200.0, 300.0, 350.0)
 DEFAULT_HEIGHT_OFFSET_UU = 160.0
 DEFAULT_HEIGHT_RETRY_STEP_UU = 30.0
 DEFAULT_MIN_DELTA_Z_UU = 70.0
 DEFAULT_MAX_DELTA_Z_UU = 140.0
 DEFAULT_MAX_ATTEMPTS = 2
-DEFAULT_STABLE_TAIL_SAMPLES = 3
+DEFAULT_SETTLE_SAMPLE_INTERVAL_S = 1.0
+DEFAULT_STRETCHER_SETTLE_TIMEOUT_S = 20.0
+DEFAULT_AGENT_SETTLE_TIMEOUT_S = 12.0
+DEFAULT_STABLE_WINDOW_SAMPLES = 3
 DEFAULT_POSITION_EPSILON_UU = 1.0
 DEFAULT_ROTATION_EPSILON_DEG = 1.0
+DEFAULT_MAX_AGENT_XY_ERROR_UU = 10.0
+DEFAULT_MAX_AGENT_YAW_ERROR_DEG = 1.0
 
 
 @dataclass(frozen=True)
 class CapturePolicy:
     """Store geometry, height, retry, and stability policy values."""
 
-    capture_distance_uu: float = DEFAULT_CAPTURE_DISTANCE_UU
+    capture_distances_uu: tuple[float, ...] = DEFAULT_CAPTURE_DISTANCES_UU
     initial_height_offset_uu: float = DEFAULT_HEIGHT_OFFSET_UU
     height_retry_step_uu: float = DEFAULT_HEIGHT_RETRY_STEP_UU
     min_delta_z_uu: float = DEFAULT_MIN_DELTA_Z_UU
     max_delta_z_uu: float = DEFAULT_MAX_DELTA_Z_UU
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
-    sample_delays: tuple[float, ...] = DEFAULT_SAMPLE_DELAYS
-    stable_tail_samples: int = DEFAULT_STABLE_TAIL_SAMPLES
+    settle_sample_interval_s: float = DEFAULT_SETTLE_SAMPLE_INTERVAL_S
+    stretcher_settle_timeout_s: float = DEFAULT_STRETCHER_SETTLE_TIMEOUT_S
+    agent_settle_timeout_s: float = DEFAULT_AGENT_SETTLE_TIMEOUT_S
+    stable_window_samples: int = DEFAULT_STABLE_WINDOW_SAMPLES
     position_epsilon_uu: float = DEFAULT_POSITION_EPSILON_UU
     rotation_epsilon_deg: float = DEFAULT_ROTATION_EPSILON_DEG
+    max_agent_xy_error_uu: float = DEFAULT_MAX_AGENT_XY_ERROR_UU
+    max_agent_yaw_error_deg: float = DEFAULT_MAX_AGENT_YAW_ERROR_DEG
 
 
 @dataclass(frozen=True)
@@ -73,12 +80,23 @@ class CaptureGeometry:
 
 @dataclass(frozen=True)
 class StabilityResult:
-    """Report whether the tail of a pose sequence is stable."""
+    """Report whether the latest pose window is stable."""
 
     stable: bool
     tail_count: int
     max_position_span_uu: float
     max_rotation_span_deg: float
+
+
+@dataclass(frozen=True)
+class PoseValidationResult:
+    """Report final horizontal-position and yaw request errors."""
+
+    valid: bool
+    xy_valid: bool
+    yaw_valid: bool
+    xy_error_uu: float
+    yaw_error_deg: float
 
 
 def _finite_positive(value: float, field_name: str) -> float:
@@ -88,22 +106,40 @@ def _finite_positive(value: float, field_name: str) -> float:
     return parsed
 
 
+def _capture_distances(values: Iterable[float]) -> tuple[float, ...]:
+    distances = []
+    for raw_value in values:
+        distance = _finite_positive(raw_value, "capture distance")
+        if not distance.is_integer():
+            raise ProbeError("capture distances must be whole UU values")
+        distances.append(distance)
+    if not distances:
+        raise ProbeError("at least one capture distance is required")
+    if len(set(distances)) != len(distances):
+        raise ProbeError("capture distances must be unique")
+    return tuple(distances)
+
+
 def validate_capture_policy(
     *,
-    capture_distance_uu: float,
+    capture_distances_uu: Iterable[float],
     initial_height_offset_uu: float,
     height_retry_step_uu: float,
     min_delta_z_uu: float,
     max_delta_z_uu: float,
     max_attempts: int,
-    sample_delays: Iterable[float],
-    stable_tail_samples: int,
+    settle_sample_interval_s: float,
+    stretcher_settle_timeout_s: float,
+    agent_settle_timeout_s: float,
+    stable_window_samples: int,
     position_epsilon_uu: float,
     rotation_epsilon_deg: float,
+    max_agent_xy_error_uu: float,
+    max_agent_yaw_error_deg: float,
 ) -> CapturePolicy:
     """Validate all user-facing capture policy values."""
 
-    distance = _finite_positive(capture_distance_uu, "capture distance")
+    distances = _capture_distances(capture_distances_uu)
     height_offset = _finite_positive(
         initial_height_offset_uu,
         "initial height offset",
@@ -118,10 +154,24 @@ def validate_capture_policy(
     if max_attempts not in (1, 2):
         raise ProbeError("max attempts must be 1 or 2")
 
-    delays = validate_sample_delays(sample_delays)
-    if stable_tail_samples <= 0 or stable_tail_samples > len(delays):
+    sample_interval = _finite_positive(
+        settle_sample_interval_s,
+        "settle sample interval",
+    )
+    stretcher_timeout = _finite_positive(
+        stretcher_settle_timeout_s,
+        "stretcher settle timeout",
+    )
+    agent_timeout = _finite_positive(
+        agent_settle_timeout_s,
+        "agent settle timeout",
+    )
+    if stable_window_samples <= 0:
+        raise ProbeError("stable window samples must be positive")
+    minimum_timeout = sample_interval * (stable_window_samples - 1)
+    if stretcher_timeout < minimum_timeout or agent_timeout < minimum_timeout:
         raise ProbeError(
-            "stable tail samples must be between 1 and the number of sample delays"
+            "settle timeouts must allow the requested stable sample window"
         )
     position_epsilon = _finite_positive(
         position_epsilon_uu,
@@ -131,17 +181,29 @@ def validate_capture_policy(
         rotation_epsilon_deg,
         "rotation epsilon",
     )
+    max_xy_error = _finite_positive(
+        max_agent_xy_error_uu,
+        "maximum agent xy error",
+    )
+    max_yaw_error = _finite_positive(
+        max_agent_yaw_error_deg,
+        "maximum agent yaw error",
+    )
     return CapturePolicy(
-        capture_distance_uu=distance,
+        capture_distances_uu=distances,
         initial_height_offset_uu=height_offset,
         height_retry_step_uu=retry_step,
         min_delta_z_uu=min_delta,
         max_delta_z_uu=max_delta,
         max_attempts=max_attempts,
-        sample_delays=delays,
-        stable_tail_samples=stable_tail_samples,
+        settle_sample_interval_s=sample_interval,
+        stretcher_settle_timeout_s=stretcher_timeout,
+        agent_settle_timeout_s=agent_timeout,
+        stable_window_samples=stable_window_samples,
         position_epsilon_uu=position_epsilon,
         rotation_epsilon_deg=rotation_epsilon,
+        max_agent_xy_error_uu=max_xy_error,
+        max_agent_yaw_error_deg=max_yaw_error,
     )
 
 
@@ -292,6 +354,38 @@ def evaluate_pose_stability(
     )
 
 
+def wrapped_angle_error_deg(actual_deg: float, requested_deg: float) -> float:
+    """Return the absolute shortest signed-angle difference in degrees."""
+
+    difference = (float(actual_deg) - float(requested_deg) + 180.0) % 360.0 - 180.0
+    return abs(difference)
+
+
+def validate_agent_pose(
+    requested_pose: Sequence[float],
+    actual_pose: Sequence[float],
+    policy: CapturePolicy,
+) -> PoseValidationResult:
+    """Validate actual actor x/y and yaw against one teleport request."""
+
+    if len(requested_pose) < 5 or len(actual_pose) < 5:
+        raise ProbeError("requested and actual agent poses must contain x, y, and yaw")
+    xy_error = math.hypot(
+        float(actual_pose[0]) - float(requested_pose[0]),
+        float(actual_pose[1]) - float(requested_pose[1]),
+    )
+    yaw_error = wrapped_angle_error_deg(actual_pose[4], requested_pose[4])
+    xy_valid = math.isfinite(xy_error) and xy_error <= policy.max_agent_xy_error_uu
+    yaw_valid = math.isfinite(yaw_error) and yaw_error <= policy.max_agent_yaw_error_deg
+    return PoseValidationResult(
+        valid=xy_valid and yaw_valid,
+        xy_valid=xy_valid,
+        yaw_valid=yaw_valid,
+        xy_error_uu=xy_error,
+        yaw_error_deg=yaw_error,
+    )
+
+
 def classify_height_delta(delta_z_uu: float, policy: CapturePolicy) -> str:
     """Classify one stable agent-to-stretcher actor z difference."""
 
@@ -326,13 +420,17 @@ def policy_as_dict(policy: CapturePolicy) -> dict[str, Any]:
     """Return a JSON-serializable policy record."""
 
     return {
-        "capture_distance_uu": policy.capture_distance_uu,
+        "capture_distances_uu": list(policy.capture_distances_uu),
         "initial_height_offset_uu": policy.initial_height_offset_uu,
         "height_retry_step_uu": policy.height_retry_step_uu,
         "valid_delta_z_uu": [policy.min_delta_z_uu, policy.max_delta_z_uu],
         "max_attempts": policy.max_attempts,
-        "sample_delays_s": list(policy.sample_delays),
-        "stable_tail_samples": policy.stable_tail_samples,
+        "settle_sample_interval_s": policy.settle_sample_interval_s,
+        "stretcher_settle_timeout_s": policy.stretcher_settle_timeout_s,
+        "agent_settle_timeout_s": policy.agent_settle_timeout_s,
+        "stable_window_samples": policy.stable_window_samples,
         "position_epsilon_uu": policy.position_epsilon_uu,
         "rotation_epsilon_deg": policy.rotation_epsilon_deg,
+        "max_agent_xy_error_uu": policy.max_agent_xy_error_uu,
+        "max_agent_yaw_error_deg": policy.max_agent_yaw_error_deg,
     }

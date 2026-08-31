@@ -17,7 +17,7 @@ from benchmark.teleport_probe_data import ProbeError, TaskSelection, configured_
 
 @dataclass(frozen=True)
 class CaptureTargetPaths:
-    """Identify the public image and sidecar for one Level/Point."""
+    """Identify one distance-qualified candidate image and sidecar."""
 
     image_path: Path
     sidecar_path: Path
@@ -55,10 +55,15 @@ class BatchArtifacts:
             diagnostics_dir=diagnostics_dir,
         )
 
-    def target_paths(self, selection: TaskSelection) -> CaptureTargetPaths:
-        """Return deterministic public artifact paths for one task point."""
+    def target_paths(
+        self,
+        selection: TaskSelection,
+        capture_distance_uu: float,
+    ) -> CaptureTargetPaths:
+        """Return deterministic paths for one point-and-distance candidate."""
 
-        stem = f"level_{selection.level}_{selection.point_id}"
+        distance_label = format_capture_distance(capture_distance_uu)
+        stem = f"level_{selection.level}_{selection.point_id}_{distance_label}"
         return CaptureTargetPaths(
             image_path=self.stretcher_dir / f"{stem}.png",
             sidecar_path=self.stretcher_dir / f"{stem}.json",
@@ -87,6 +92,15 @@ def _create_unique_directory(root: Path, base_name: str) -> Path:
     raise ProbeError(f"could not create a unique run directory under: {root}")
 
 
+def format_capture_distance(capture_distance_uu: float) -> str:
+    """Return the canonical whole-UU filename label."""
+
+    distance = float(capture_distance_uu)
+    if not distance.is_integer() or distance <= 0:
+        raise ProbeError("capture distance filename requires a positive whole UU")
+    return f"{int(distance)}UU"
+
+
 def sha256_bytes(payload: bytes) -> str:
     """Return the hexadecimal SHA-256 digest for one payload."""
 
@@ -109,6 +123,7 @@ def sha256_file(path: Path) -> str:
 def inspect_existing_capture(
     paths: CaptureTargetPaths,
     selection: TaskSelection,
+    capture_distance_uu: float,
 ) -> tuple[str, dict[str, Any] | None]:
     """Classify a public image/sidecar pair for resume handling."""
 
@@ -124,9 +139,13 @@ def inspect_existing_capture(
         return "conflict", None
     if not isinstance(metadata, dict) or metadata.get("status") != "captured":
         return "conflict", metadata if isinstance(metadata, dict) else None
+    if metadata.get("schema_version") != 2:
+        return "conflict", metadata
     if metadata.get("level") != selection.level:
         return "conflict", metadata
     if metadata.get("point_id") != selection.point_id:
+        return "conflict", metadata
+    if metadata.get("capture_distance_uu") != float(capture_distance_uu):
         return "conflict", metadata
     if metadata.get("filename") != paths.image_path.name:
         return "conflict", metadata
@@ -186,10 +205,16 @@ def save_diagnostic_frame(
     selection: TaskSelection,
     image: Any,
     suffix: str,
+    capture_distance_uu: float | None = None,
 ) -> Path | None:
     """Save the final failed-attempt frame outside the public goal directory."""
 
-    filename = f"L{selection.level}-P{selection.point_id}-{suffix}.png"
+    distance_label = (
+        f"-{format_capture_distance(capture_distance_uu)}"
+        if capture_distance_uu is not None
+        else ""
+    )
+    filename = f"L{selection.level}-P{selection.point_id}{distance_label}-{suffix}.png"
     path = artifacts.diagnostics_dir / filename
     success, encoded = cv2.imencode(".png", image)
     if not success:
@@ -202,7 +227,7 @@ def build_initial_run_metadata(inputs: CaptureInputs) -> dict[str, Any]:
     """Build durable batch-level metadata before UE startup."""
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "running",
         "created_at_utc": utc_now(),
         "completed_at_utc": None,
@@ -213,6 +238,11 @@ def build_initial_run_metadata(inputs: CaptureInputs) -> dict[str, Any]:
         "render_quality": inputs.render.quality,
         "resume": inputs.resume,
         "overwrite": inputs.overwrite,
+        "capture_distances_uu": list(inputs.policy.capture_distances_uu),
+        "selected_point_count": len(inputs.selections),
+        "requested_view_count": (
+            len(inputs.selections) * len(inputs.policy.capture_distances_uu)
+        ),
         "tasks": [
             {
                 "level": selection.level,
