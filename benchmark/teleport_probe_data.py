@@ -116,7 +116,7 @@ def _parse_vector(value: Any, field_name: str) -> tuple[float, float, float]:
         if not math.isfinite(number):
             raise ProbeError(f"{field_name}[{index}] must be finite")
         parsed.append(number)
-    return cast(tuple[float, float, float], tuple(parsed))
+    return cast("tuple[float, float, float]", tuple(parsed))
 
 
 def load_pose_manifest(path: Path) -> tuple[PoseSpec, ...]:

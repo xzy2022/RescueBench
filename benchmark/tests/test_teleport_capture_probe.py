@@ -231,6 +231,7 @@ class ProbeConfigurationTests(unittest.TestCase):
                 ast.parse(source, filename=str(path), feature_version=(3, 8))
                 self.assertNotIn("strict=", source)
                 self.assertNotIn("from datetime import UTC", source)
+                self.assertNotIn("cast(tuple[", source)
 
 
 class CaptureRecordTests(unittest.TestCase):
