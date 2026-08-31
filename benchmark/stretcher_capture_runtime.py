@@ -23,7 +23,7 @@ from benchmark.teleport_probe_capture import (
 )
 from benchmark.teleport_probe_data import ProbeError, TaskSelection
 
-SampleSink = Callable[[dict[str, Any]], None]
+SampleSink = Callable[[dict], None]
 
 
 @dataclass(frozen=True)
