@@ -6,7 +6,7 @@ import ast
 import json
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -361,40 +361,55 @@ class ProbeLifecycleTests(unittest.TestCase):
                 samples_path=run_dir / "samples.jsonl",
                 metadata_path=run_dir / "run.json",
             )
-            with (
-                patch.object(
-                    teleport_probe_cli,
-                    "_resolve_inputs",
-                    return_value=inputs,
-                ),
-                patch.object(
-                    teleport_probe_cli.ProbeArtifacts,
-                    "create",
-                    return_value=artifacts,
-                ),
-                patch.object(
-                    teleport_probe_cli,
-                    "build_run_metadata",
-                    return_value={"status": "running"},
-                ),
-                patch.object(teleport_probe_cli, "write_json_atomic"),
-                patch.object(teleport_probe_cli, "print_probe_inputs"),
-                patch.object(
-                    teleport_probe_cli,
-                    "EnvManager",
-                    return_value=manager,
-                ),
-                patch.object(
-                    teleport_probe_cli,
-                    "_execute_probe",
-                    side_effect=RuntimeError("probe failed"),
-                ),
-                patch.object(
-                    teleport_probe_cli,
-                    "_record_failure",
-                    side_effect=OSError("metadata failed"),
-                ),
-            ):
+            with ExitStack() as stack:
+                stack.enter_context(
+                    patch.object(
+                        teleport_probe_cli,
+                        "_resolve_inputs",
+                        return_value=inputs,
+                    )
+                )
+                stack.enter_context(
+                    patch.object(
+                        teleport_probe_cli.ProbeArtifacts,
+                        "create",
+                        return_value=artifacts,
+                    )
+                )
+                stack.enter_context(
+                    patch.object(
+                        teleport_probe_cli,
+                        "build_run_metadata",
+                        return_value={"status": "running"},
+                    )
+                )
+                stack.enter_context(
+                    patch.object(teleport_probe_cli, "write_json_atomic")
+                )
+                stack.enter_context(
+                    patch.object(teleport_probe_cli, "print_probe_inputs")
+                )
+                stack.enter_context(
+                    patch.object(
+                        teleport_probe_cli,
+                        "EnvManager",
+                        return_value=manager,
+                    )
+                )
+                stack.enter_context(
+                    patch.object(
+                        teleport_probe_cli,
+                        "_execute_probe",
+                        side_effect=RuntimeError("probe failed"),
+                    )
+                )
+                stack.enter_context(
+                    patch.object(
+                        teleport_probe_cli,
+                        "_record_failure",
+                        side_effect=OSError("metadata failed"),
+                    )
+                )
                 with self.assertRaisesRegex(OSError, "metadata failed"):
                     teleport_probe_cli.run_probe(SimpleNamespace())
 

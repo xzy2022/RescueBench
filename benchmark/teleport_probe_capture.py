@@ -62,6 +62,47 @@ class RuntimeSnapshot:
     image: Any
 
 
+def read_runtime_snapshot(runtime: RuntimeHandles) -> RuntimeSnapshot:
+    """Hard-read tracked object poses, the camera pose, and one color frame."""
+
+    labels = list(runtime.object_names)
+    names = [runtime.object_names[label] for label in labels]
+    obj_poses, cam_poses, images, _masks, _depths = (
+        runtime.env_unwrapped.unrealcv.get_pose_img_batch(
+            names,
+            [runtime.cam_id],
+            [True, True, False, False],
+        )
+    )
+    if len(obj_poses) != len(names):
+        raise ProbeError(
+            f"Expected {len(names)} object poses, received {len(obj_poses)}"
+        )
+    if len(cam_poses) != 1:
+        raise ProbeError(f"Expected one camera pose, received {len(cam_poses)}")
+    if len(images) != 1 or images[0] is None:
+        raise ProbeError("UnrealCV did not return one color frame")
+
+    for index, label in enumerate(labels):
+        pose = obj_poses[index]
+        if len(pose) != 6:
+            raise ProbeError(f"Expected a 6D pose for {label}, received {pose!r}")
+    if len(cam_poses[0]) != 6:
+        raise ProbeError(f"Expected a 6D camera pose, received {cam_poses[0]!r}")
+    if not hasattr(images[0], "shape") or len(images[0].shape) < 2:
+        raise ProbeError("UnrealCV color frame has no valid image shape")
+
+    actual = {
+        label: [float(value) for value in obj_poses[index]]
+        for index, label in enumerate(labels)
+    }
+    return RuntimeSnapshot(
+        actual=actual,
+        camera_pose=[float(value) for value in cam_poses[0]],
+        image=images[0],
+    )
+
+
 def runtime_handles(env: Any) -> RuntimeHandles:
     """Resolve and validate the protagonist and tracked runtime objects."""
 
@@ -220,42 +261,7 @@ class CaptureSession:
     def capture_state(self) -> RuntimeSnapshot:
         """Hard-read tracked object poses, the camera pose, and one frame."""
 
-        labels = list(self.runtime.object_names)
-        names = [self.runtime.object_names[label] for label in labels]
-        obj_poses, cam_poses, images, _masks, _depths = (
-            self.runtime.env_unwrapped.unrealcv.get_pose_img_batch(
-                names,
-                [self.runtime.cam_id],
-                [True, True, False, False],
-            )
-        )
-        if len(obj_poses) != len(names):
-            raise ProbeError(
-                f"Expected {len(names)} object poses, received {len(obj_poses)}"
-            )
-        if len(cam_poses) != 1:
-            raise ProbeError(f"Expected one camera pose, received {len(cam_poses)}")
-        if len(images) != 1 or images[0] is None:
-            raise ProbeError("UnrealCV did not return one color frame")
-
-        for index, label in enumerate(labels):
-            pose = obj_poses[index]
-            if len(pose) != 6:
-                raise ProbeError(f"Expected a 6D pose for {label}, received {pose!r}")
-        if len(cam_poses[0]) != 6:
-            raise ProbeError(f"Expected a 6D camera pose, received {cam_poses[0]!r}")
-        if not hasattr(images[0], "shape") or len(images[0].shape) < 2:
-            raise ProbeError("UnrealCV color frame has no valid image shape")
-
-        actual = {
-            label: [float(value) for value in obj_poses[index]]
-            for index, label in enumerate(labels)
-        }
-        return RuntimeSnapshot(
-            actual=actual,
-            camera_pose=[float(value) for value in cam_poses[0]],
-            image=images[0],
-        )
+        return read_runtime_snapshot(self.runtime)
 
     def capture_sequence(self, request: SequenceRequest) -> list[dict[str, Any]]:
         """Capture all requested delays relative to one sequence start."""
