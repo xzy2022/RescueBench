@@ -132,8 +132,6 @@ class BenchmarkRunner:
                         time_cost=0,
                         steps=0,
                         collision_count=0,
-                        failure_reason="EXCEPTION",
-                        final_state="FAILED",
                     )
                     episode_metrics_list.append(metrics)
                     b.result_writer.append_episode_result(metrics)

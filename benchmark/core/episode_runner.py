@@ -194,21 +194,6 @@ class EpisodeRunner:
             stage1_score=progress_metrics["stage1_score"],
             stage2_score=progress_metrics["stage2_score"],
             task_score=progress_metrics["task_score"],
-            paper_interpretation_s1_score=progress_metrics[
-                "paper_interpretation_s1_score"
-            ],
-            paper_interpretation_s2_score=progress_metrics[
-                "paper_interpretation_s2_score"
-            ],
-            paper_interpretation_s3_score=progress_metrics[
-                "paper_interpretation_s3_score"
-            ],
-            paper_interpretation_s4_score=progress_metrics[
-                "paper_interpretation_s4_score"
-            ],
-            paper_interpretation_task_score=progress_metrics[
-                "paper_interpretation_task_score"
-            ],
             movement_effectiveness=progress_metrics["movement_effectiveness"],
             control_loop_fps=control_loop_fps,
             path_length=progress_metrics["path_length"],

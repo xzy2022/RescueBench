@@ -4,7 +4,6 @@ This wrapper owns the benchmark scoring flow while keeping the scoring formula
 in ``utils.progress_tracker.EpisodeProgressTracker`` unchanged.
 """
 
-from utils.paper_interpretation_scores import calculate_paper_interpretation_scores
 from utils.progress_tracker import EpisodeProgressTracker
 
 
@@ -46,12 +45,4 @@ class ProgressTrackingController:
         return self.tracker.sync_passthrough_drop_at_wait_confirm(interaction_pos)
 
     def finalize(self):
-        progress_metrics = self.tracker.finalize()
-        progress_metrics.update(
-            calculate_paper_interpretation_scores(
-                progress_metrics,
-                stage_near_radius=self.tracker.STAGE_NEAR_RADIUS,
-                eps=self.tracker.eps,
-            )
-        )
-        return progress_metrics
+        return self.tracker.finalize()
