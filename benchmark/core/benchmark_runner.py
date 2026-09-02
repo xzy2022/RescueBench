@@ -247,6 +247,7 @@ class BenchmarkRunner:
         }
         config.update(
             levels=levels,
+            level_episode_timeouts=dict(b.task_loader.level_episode_timeouts),
             point_ids=point_ids,
             episodes_per_point=episodes_per_point,
             dispatch_order="map->level->point",

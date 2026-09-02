@@ -16,11 +16,13 @@ class TaskLoader:
         fallback_env_id: str,
         time_limits: Dict[int, int],
         multiagent_env: bool = False,
+        level_episode_timeouts: Optional[Dict[int, int]] = None,
     ):
         self.gym_rescue_root = gym_rescue_root
         self.fallback_env_id = fallback_env_id
         self.time_limits = time_limits
         self.multiagent_env = bool(multiagent_env)
+        self.level_episode_timeouts = dict(level_episode_timeouts or {})
         self._test_points_cache: Dict[int, List[Dict[str, Any]]] = {}
 
     def resolve_env_id(self, env_id: str) -> str:
@@ -59,7 +61,17 @@ class TaskLoader:
     def get_point_count(self, level: int) -> int:
         return len(self.load_level_test_points(level))
 
+    def resolve_episode_timeout(self, level: int, test_point: Dict[str, Any]) -> int:
+        """Resolve a test point timeout, preferring the CLI level override."""
+
+        if level in self.level_episode_timeouts:
+            return int(self.level_episode_timeouts[level])
+        return int(test_point.get("timeout", self.time_limits.get(level, 300)))
+
     def get_level_time_limit_text(self, level: int, point_ids: Optional[List[int]] = None) -> str:
+        if level in self.level_episode_timeouts:
+            return f"{self.level_episode_timeouts[level]}s"
+
         points = self.load_level_test_points(level)
         if not points:
             return f"{self.time_limits.get(level, 300)}s"
@@ -73,7 +85,7 @@ class TaskLoader:
             return f"{self.time_limits.get(level, 300)}s"
 
         time_limits = sorted({
-            int(point.get("timeout", self.time_limits.get(level, 300)))
+            self.resolve_episode_timeout(level, point)
             for point in selected_points
         })
         if len(time_limits) == 1:
@@ -121,7 +133,7 @@ class TaskLoader:
             ambulance_pose=test_point["ambulance_loc"],
             reference_text=ref_text,
             reference_image_path=ref_image_full_path,
-            timeout=int(test_point.get("timeout", self.time_limits.get(level, 300))),
+            timeout=self.resolve_episode_timeout(level, test_point),
             level=level,
             point_id=point_id,
         ).as_dict()

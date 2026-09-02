@@ -204,6 +204,7 @@ class EpisodeRunner:
             failure_reason=sm_metrics["failure_reason"],
             final_state=sm_metrics["final_state"],
             reference_text=task_context.get("reference_text", ""),
+            episode_timeout=time_limit,
         )
         benchmark.agent.on_episode_end(success, metrics)
         return metrics

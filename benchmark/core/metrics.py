@@ -60,6 +60,7 @@ class EpisodeMetrics:
 
     # 任务上下文
     reference_text: str = ""
+    episode_timeout: Optional[int] = None
 
 
 @dataclass

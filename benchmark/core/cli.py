@@ -74,6 +74,13 @@ def create_base_parser(
         help="Difficulty levels to evaluate (0-4)",
     )
     parser.add_argument(
+        "--levels-episode-timeout",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Episode timeout seconds aligned positionally with --levels",
+    )
+    parser.add_argument(
         "--point-ids",
         type=int,
         nargs="+",
@@ -298,6 +305,7 @@ def run_benchmark_from_args(
     np = __import__("numpy")
     model_name = model_name or getattr(args, "model", "unknown")
     benchmark = None
+    levels = getattr(args, "levels", [2, 3, 4])
 
     def _cleanup(signum=None, frame=None):
         try:
@@ -358,10 +366,13 @@ def run_benchmark_from_args(
             args, "passthrough_env_term_geometry_sync", True
         ),
         multiagent_env=getattr(args, "multiagent_env", False),
+        level_episode_timeouts=dict(
+            zip(levels, getattr(args, "levels_episode_timeout", None) or [])
+        ),
     )
     try:
         result = benchmark.run_benchmark(
-            levels=getattr(args, "levels", [2, 3, 4]),
+            levels=levels,
             episodes_per_point=getattr(args, "episodes", 1),
             model_name=model_name,
             point_ids=getattr(args, "point_ids", None),

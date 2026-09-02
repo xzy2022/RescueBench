@@ -108,6 +108,7 @@ class RescueBenchmark:
         resume_skip: str = 'all',
         resume_append: bool = False,
         multiagent_env: bool = False,
+        level_episode_timeouts: Optional[Dict[int, int]] = None,
     ):
         self.env_id = env_id
         self.agent = agent
@@ -158,6 +159,7 @@ class RescueBenchmark:
             fallback_env_id=self.env_id,
             time_limits=self.TIME_LIMITS,
             multiagent_env=self.multiagent_env,
+            level_episode_timeouts=level_episode_timeouts,
         )
         self.episode_runner = EpisodeRunner(self)
         self.resume_manager = ResumeManager(self.resume_jsonl, self.resume_skip)
@@ -183,6 +185,12 @@ class RescueBenchmark:
         print(f" Env=Auto(from test_jsonl, fallback={self.env_id})  Res={self.resolution}  Render={self.render}")
         if self.multiagent_env:
             print(" MultiAgentEnv: ON (自动将 UnrealRescue-* 映射到 UnrealRescueMultiAgent-*)")
+        if self.task_loader.level_episode_timeouts:
+            timeout_text = ", ".join(
+                f"L{level}={timeout}s"
+                for level, timeout in self.task_loader.level_episode_timeouts.items()
+            )
+            print(f" LevelEpisodeTimeouts: {timeout_text}")
         print(f" Collision={self.enable_collision_detection}  Trajectory={self.enable_trajectory_recording}{sim}")
         print(
             f" StateMachine: {mode}  RescueXY={self.rescue_distance}cm  PlaceXY={self.place_distance}cm  "
