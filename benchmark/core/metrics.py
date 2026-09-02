@@ -45,6 +45,11 @@ class EpisodeMetrics:
     stage1_score: float = 0.0
     stage2_score: float = 0.0
     task_score: float = 0.0
+    paper_interpretation_s1_score: Optional[float] = None
+    paper_interpretation_s2_score: Optional[float] = None
+    paper_interpretation_s3_score: Optional[float] = None
+    paper_interpretation_s4_score: Optional[float] = None
+    paper_interpretation_task_score: Optional[float] = None
     movement_effectiveness: float = 0.0
     control_loop_fps: float = 0.0
     path_length: float = 0.0
