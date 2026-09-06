@@ -1,0 +1,24 @@
+{
+  "level": 0,
+  "point_id": 0,
+  "resolution": [320, 320],
+  "period_s": 0.2,
+  "settle_s": 2.0,
+  "observe_s": 3.0,
+  "case_observe_s": 2.0,
+  "position_cases": [
+    {"id": "baseline", "offset_world_xy_cm": [0, 0]},
+    {"id": "x_plus_100", "offset_world_xy_cm": [100, 0]},
+    {"id": "y_plus_100", "offset_world_xy_cm": [0, 100]}
+  ],
+  "yaw_cases": [
+    {"id": "yaw_0", "yaw_deg": 0},
+    {"id": "yaw_plus_90", "yaw_deg": 90},
+    {"id": "yaw_minus_90", "yaw_deg": -90}
+  ],
+  "head_cases": [
+    {"id": "neutral", "head_index": 0},
+    {"id": "head_index_1", "head_index": 1},
+    {"id": "head_index_2", "head_index": 2}
+  ]
+}

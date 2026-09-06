@@ -38,6 +38,10 @@ def report(samples_path, output):
                 "camera_rotation2",
                 "active_turn",
                 "active_forward",
+                "active_head_index",
+                "active_head_rotation0",
+                "active_head_rotation1",
+                "active_head_rotation2",
                 "read_duration_s",
             ]
         )
@@ -49,6 +53,8 @@ def report(samples_path, output):
                     *row["actor_pose"],
                     *row["camera_pose"],
                     *row["active_move"],
+                    row.get("active_head_index", 0),
+                    *row.get("active_head_rotation", [0.0, 0.0, 0.0]),
                     row["time_s"] - row["read_started_s"],
                 ]
             )

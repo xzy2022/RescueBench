@@ -16,6 +16,7 @@ DEFAULTS = {
     "period_s": 0.2,
     "settle_s": 2.0,
     "observe_s": 3.0,
+    "case_observe_s": 2.0,
     "stop_observe_s": 2.0,
     "waypoint_timeout_s": 15.0,
     "frame": "start_local_cm",
@@ -42,6 +43,7 @@ def read_plan(path):
         "period_s",
         "settle_s",
         "observe_s",
+        "case_observe_s",
         "stop_observe_s",
         "waypoint_timeout_s",
     ):
@@ -58,8 +60,51 @@ def read_plan(path):
     return plan
 
 
+def check_named_cases(cases, value_name, value_length=None):
+    """Validate ordered calibration cases with unique IDs and finite values."""
+    if not isinstance(cases, list) or not cases:
+        raise ValueError("Calibration cases must be a non-empty JSON array")
+    seen = set()
+    for case in cases:
+        case_id = case.get("id") if isinstance(case, dict) else None
+        if not isinstance(case_id, str) or not case_id:
+            raise ValueError("Each calibration case requires a non-empty string id")
+        if case_id in seen:
+            raise ValueError(f"Duplicate calibration case id: {case_id}")
+        seen.add(case_id)
+        value = case.get(value_name)
+        if value_length is not None:
+            if not isinstance(value, list) or len(value) != value_length:
+                raise ValueError(
+                    f"{case_id}.{value_name} must contain {value_length} numbers"
+                )
+            values = value
+        else:
+            values = [value]
+        if any(
+            isinstance(item, bool) or not isinstance(item, (int, float))
+            for item in values
+        ):
+            raise ValueError(f"{case_id}.{value_name} must contain only numbers")
+        if any(not math.isfinite(item) for item in values):
+            raise ValueError(f"{case_id}.{value_name} must be finite")
+
+
 def check_stage(plan, args):
     """Check the selected stage's required inputs before launching UE."""
+    if args.stage == "position":
+        check_named_cases(plan.get("position_cases"), "offset_world_xy_cm", 2)
+    if args.stage == "yaw":
+        check_named_cases(plan.get("yaw_cases"), "yaw_deg")
+    if args.stage == "head":
+        check_named_cases(plan.get("head_cases"), "head_index")
+        if any(
+            isinstance(case["head_index"], bool)
+            or not isinstance(case["head_index"], int)
+            or case["head_index"] < 0
+            for case in plan["head_cases"]
+        ):
+            raise ValueError("head_index must be a non-negative integer")
     if args.stage == "actions":
         case = plan["actions"][args.case]
         turn, forward = case["move"]
@@ -87,13 +132,15 @@ def run_stage(args):
     """Run exactly one stage; future stages require separate invocations."""
     plan = read_plan(args.plan)
     check_stage(plan, args)
+    selected_case = args.case if args.stage == "actions" else None
+    repeat_action = bool(args.repeat) if args.stage == "actions" else False
     if args.preview:
         print(
             json.dumps(
                 {
                     "stage": args.stage,
-                    "case": args.case,
-                    "repeat": args.repeat,
+                    "case": selected_case,
+                    "repeat": repeat_action,
                     "plan": plan,
                 },
                 indent=2,
@@ -105,15 +152,16 @@ def run_stage(args):
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     root = Path(__file__).resolve().parent.parent
+    git_command = ["git", "-c", f"safe.directory={root}"]
     git_head = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
+        [*git_command, "rev-parse", "HEAD"],
         cwd=root,
         capture_output=True,
         text=True,
         check=False,
     )
     git_status = subprocess.run(
-        ["git", "status", "--short"],
+        [*git_command, "status", "--short"],
         cwd=root,
         capture_output=True,
         text=True,
@@ -123,14 +171,19 @@ def run_stage(args):
         output / "run.json",
         {
             "stage": args.stage,
-            "case": args.case,
-            "repeat": args.repeat,
+            "case": selected_case,
+            "repeat": repeat_action,
             "plan_path": str(args.plan.resolve()),
             "effective_plan": plan,
             "created_utc": datetime.now(timezone.utc).isoformat(),
             "python": sys.version,
             "git_head": git_head.stdout.strip(),
             "git_status": git_status.stdout,
+            "git_error": "\n".join(
+                part.strip()
+                for part in (git_head.stderr, git_status.stderr)
+                if part.strip()
+            ),
             "time_basis": "wall_clock_perf_counter",
             "pose_order_assumption": ["x", "y", "z", "rotation0", "yaw", "rotation2"],
             "position_unit": "cm",
@@ -142,15 +195,17 @@ def run_stage(args):
     experiment = runtime.Experiment(plan, output)
     summary = {"status": "running"}
     try:
-        origin = experiment.start()
+        origin, reset_comparison = experiment.start()
         if args.stage == "pose":
-            experiment.observe(plan["observe_s"], "stationary")
-            result = {
-                "origin_pose": origin["actor_pose"],
-                "final_pose": experiment.sample("final")["actor_pose"],
-            }
+            result = experiment.run_pose(origin, reset_comparison)
+        elif args.stage == "position":
+            result = experiment.run_position(origin)
+        elif args.stage == "yaw":
+            result = experiment.run_yaw(origin)
+        elif args.stage == "head":
+            result = experiment.run_head(origin)
         elif args.stage == "actions":
-            result = experiment.run_actions(args.case, args.repeat)
+            result = experiment.run_actions(selected_case, repeat_action)
         else:
             result = experiment.follow(origin)
         summary = {"status": "finished", **result}
@@ -174,7 +229,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run", help="Run one stage; --preview never imports UE")
-    run.add_argument("--stage", choices=("pose", "actions", "follow"), required=True)
+    run.add_argument(
+        "--stage",
+        choices=("pose", "position", "yaw", "head", "actions", "follow"),
+        required=True,
+    )
     run.add_argument("--plan", type=Path, required=True)
     run.add_argument("--output", type=Path, help="New run directory; must not exist")
     run.add_argument(
