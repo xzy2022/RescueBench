@@ -1,0 +1,30 @@
+{
+  "level": 0,
+  "point_id": 0,
+  "resolution": [320, 320],
+  "period_s": 0.2,
+  "settle_s": 2.0,
+  "observe_s": 3.0,
+  "stop_observe_s": 2.0,
+  "waypoint_timeout_s": 15.0,
+  "frame": "start_local_cm",
+  "waypoints": [[100, 0], [200, 0], [200, 100]],
+  "controller": {
+    "turn_sign": 1,
+    "turn_gain": 0.5,
+    "forward_gain": 0.3,
+    "max_turn": 15,
+    "max_forward": 30,
+    "turn_in_place_deg": 45,
+    "arrival_radius_cm": 10
+  },
+  "actions": {
+    "zero": {"move": [0, 0], "hold_s": 2},
+    "forward": {"move": [0, 20], "hold_s": 1},
+    "forward_fast": {"move": [0, 40], "hold_s": 1},
+    "left": {"move": [-10, 0], "hold_s": 1},
+    "right": {"move": [10, 0], "hold_s": 1},
+    "left_forward": {"move": [-10, 20], "hold_s": 1},
+    "right_forward": {"move": [10, 20], "hold_s": 1}
+  }
+}
