@@ -51,6 +51,7 @@ class Experiment:
         self.names = []
         self.camera_id = None
         self.last_sample = None
+        self.task_context = None
 
     def now(self):
         """Return elapsed wall-clock seconds, not simulated time."""
@@ -63,7 +64,7 @@ class Experiment:
         self.stream.flush()
         return row
 
-    def start(self):
+    def start(self, prepare_action=True):
         """Create the normal Mixed environment without a model or task controller."""
         # Imports stay here so help, planning and reporting work without UE/Gym.
         np = importlib.import_module("numpy")
@@ -74,6 +75,7 @@ class Experiment:
         context = dict(selection.task_context)
         if "start_pose" in self.plan:
             context["agent_pose"] = self.plan["start_pose"]
+        self.task_context = context
         self.record("task", task_context=context)
         self.manager.ensure_env(context["env_id"], self.plan["level"])
         self.manager.apply_task_context(context)
@@ -108,8 +110,9 @@ class Experiment:
                 else None
             )
         self.record("reset_comparison", **reset_comparison)
-        self.send([0.0, 0.0], "initial_stop")
-        self.observe(self.plan["settle_s"], "settle")
+        if prepare_action:
+            self.send([0.0, 0.0], "initial_stop")
+            self.observe(self.plan["settle_s"], "settle")
         return self.sample("origin"), reset_comparison
 
     def head_value(self, head_index):
@@ -185,19 +188,20 @@ class Experiment:
         )
         return self.last_sample
 
-    def observe(self, seconds, label, repeat_move=None):
+    def observe(self, seconds, label, repeat_move=None, period_s=None, **fields):
         """Sample until a wall-clock deadline; optionally resend at sample rate."""
         deadline = self.now() + seconds
+        period = self.plan["period_s"] if period_s is None else period_s
         first_sample = True
+        samples = []
         while self.now() < deadline:
             tick = self.now()
             if repeat_move is not None and not first_sample:
                 self.send(repeat_move, label)
-            self.sample(label)
+            samples.append(self.sample(label, **fields))
             first_sample = False
-            time.sleep(
-                max(0.0, min(deadline, tick + self.plan["period_s"]) - self.now())
-            )
+            time.sleep(max(0.0, min(deadline, tick + period) - self.now()))
+        return samples
 
     def run_pose(self, origin, reset_comparison):
         """Finish the static baseline and retain reset cache versus hard-read data."""

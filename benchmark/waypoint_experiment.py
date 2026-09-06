@@ -4,8 +4,10 @@ import argparse
 import importlib
 import json
 import math
+import os
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -17,8 +19,14 @@ DEFAULTS = {
     "settle_s": 2.0,
     "observe_s": 3.0,
     "case_observe_s": 2.0,
+    "diagnostic_observe_s": 2.0,
+    "force_hold_s": 2.0,
+    "release_observe_s": 1.0,
+    "camera_mount_observe_s": 1.0,
     "stop_observe_s": 2.0,
     "waypoint_timeout_s": 15.0,
+    "diagnostic_target_yaw_deg": 90.0,
+    "rotation_axis_deg": 30.0,
     "frame": "start_local_cm",
     "controller": {
         "turn_sign": 1,
@@ -44,6 +52,10 @@ def read_plan(path):
         "settle_s",
         "observe_s",
         "case_observe_s",
+        "diagnostic_observe_s",
+        "force_hold_s",
+        "release_observe_s",
+        "camera_mount_observe_s",
         "stop_observe_s",
         "waypoint_timeout_s",
     ):
@@ -105,6 +117,25 @@ def check_stage(plan, args):
             for case in plan["head_cases"]
         ):
             raise ValueError("head_index must be a non-negative integer")
+    if args.stage == "yaw_diagnosis":
+        arms = (
+            "actor_only",
+            "move_before",
+            "stand_before",
+            "full_step_before",
+            "force_hold",
+        )
+        if args.case not in arms:
+            raise ValueError(f"yaw_diagnosis --case must be one of: {', '.join(arms)}")
+        if not math.isfinite(plan["diagnostic_target_yaw_deg"]):
+            raise ValueError("diagnostic_target_yaw_deg must be finite")
+    if args.stage == "rotation_axes":
+        value = plan["rotation_axis_deg"]
+        if not math.isfinite(value) or not 0 < abs(value) <= 180:
+            raise ValueError("rotation_axis_deg must be finite and within 0-180")
+    if args.stage == "camera_mount":
+        check_named_cases(plan.get("camera_location_cases"), "relative_location", 3)
+        check_named_cases(plan.get("camera_rotation_cases"), "head_rotation", 3)
     if args.stage == "actions":
         case = plan["actions"][args.case]
         turn, forward = case["move"]
@@ -128,11 +159,51 @@ def write_json(path, value):
     )
 
 
+def git_metadata(root, output):
+    """Read Git provenance through a temporary protected config for runner users."""
+    config_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=output, delete=False
+        ) as stream:
+            stream.write(f"[safe]\n\tdirectory = {root.as_posix()}\n")
+            config_path = Path(stream.name)
+        env = os.environ.copy()
+        env["GIT_CONFIG_GLOBAL"] = str(config_path)
+        env["GIT_CONFIG_NOSYSTEM"] = "1"
+        command = ["git", "-C", str(root)]
+        head = subprocess.run(
+            [*command, "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        status = subprocess.run(
+            [*command, "status", "--short"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        error = "\n".join(
+            part.strip() for part in (head.stderr, status.stderr) if part.strip()
+        )
+        return head.stdout.strip(), status.stdout, error
+    finally:
+        if config_path is not None:
+            config_path.unlink(missing_ok=True)
+
+
 def run_stage(args):
     """Run exactly one stage; future stages require separate invocations."""
     plan = read_plan(args.plan)
+    if args.level is not None:
+        plan["level"] = args.level
+    if args.point_id is not None:
+        plan["point_id"] = args.point_id
     check_stage(plan, args)
-    selected_case = args.case if args.stage == "actions" else None
+    selected_case = args.case if args.stage in ("actions", "yaw_diagnosis") else None
     repeat_action = bool(args.repeat) if args.stage == "actions" else False
     if args.preview:
         print(
@@ -152,21 +223,7 @@ def run_stage(args):
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     root = Path(__file__).resolve().parent.parent
-    git_command = ["git", "-c", f"safe.directory={root}"]
-    git_head = subprocess.run(
-        [*git_command, "rev-parse", "HEAD"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    git_status = subprocess.run(
-        [*git_command, "status", "--short"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    git_head, git_status, git_error = git_metadata(root, output)
     write_json(
         output / "run.json",
         {
@@ -177,13 +234,9 @@ def run_stage(args):
             "effective_plan": plan,
             "created_utc": datetime.now(timezone.utc).isoformat(),
             "python": sys.version,
-            "git_head": git_head.stdout.strip(),
-            "git_status": git_status.stdout,
-            "git_error": "\n".join(
-                part.strip()
-                for part in (git_head.stderr, git_status.stderr)
-                if part.strip()
-            ),
+            "git_head": git_head,
+            "git_status": git_status,
+            "git_error": git_error,
             "time_basis": "wall_clock_perf_counter",
             "pose_order_assumption": ["x", "y", "z", "rotation0", "yaw", "rotation2"],
             "position_unit": "cm",
@@ -195,7 +248,12 @@ def run_stage(args):
     experiment = runtime.Experiment(plan, output)
     summary = {"status": "running"}
     try:
-        origin, reset_comparison = experiment.start()
+        prepare_action = args.stage not in (
+            "yaw_diagnosis",
+            "rotation_axes",
+            "camera_mount",
+        )
+        origin, reset_comparison = experiment.start(prepare_action=prepare_action)
         if args.stage == "pose":
             result = experiment.run_pose(origin, reset_comparison)
         elif args.stage == "position":
@@ -204,6 +262,21 @@ def run_stage(args):
             result = experiment.run_yaw(origin)
         elif args.stage == "head":
             result = experiment.run_head(origin)
+        elif args.stage == "yaw_diagnosis":
+            diagnostics = importlib.import_module(
+                "benchmark.waypoint_stage1_diagnostics"
+            )
+            result = diagnostics.run_yaw_diagnosis(experiment, origin, selected_case)
+        elif args.stage == "rotation_axes":
+            diagnostics = importlib.import_module(
+                "benchmark.waypoint_stage1_diagnostics"
+            )
+            result = diagnostics.run_rotation_axes(experiment, origin)
+        elif args.stage == "camera_mount":
+            diagnostics = importlib.import_module(
+                "benchmark.waypoint_stage1_diagnostics"
+            )
+            result = diagnostics.run_camera_mount(experiment, origin)
         elif args.stage == "actions":
             result = experiment.run_actions(selected_case, repeat_action)
         else:
@@ -231,11 +304,23 @@ def main():
     run = commands.add_parser("run", help="Run one stage; --preview never imports UE")
     run.add_argument(
         "--stage",
-        choices=("pose", "position", "yaw", "head", "actions", "follow"),
+        choices=(
+            "pose",
+            "position",
+            "yaw",
+            "head",
+            "yaw_diagnosis",
+            "rotation_axes",
+            "camera_mount",
+            "actions",
+            "follow",
+        ),
         required=True,
     )
     run.add_argument("--plan", type=Path, required=True)
     run.add_argument("--output", type=Path, help="New run directory; must not exist")
+    run.add_argument("--level", type=int, help="Override plan level for this run")
+    run.add_argument("--point-id", type=int, help="Override plan point_id for this run")
     run.add_argument(
         "--case", default="forward", help="One named action case from plan"
     )
