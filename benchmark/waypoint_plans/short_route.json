@@ -9,6 +9,11 @@
   "waypoint_timeout_s": 15.0,
   "frame": "start_local_cm",
   "waypoints": [[100, 0], [200, 0], [200, 100]],
+  "waypoint_conversion": {
+    "normalize": true,
+    "max_v": 0.2,
+    "rate_hz": 4.0
+  },
   "controller": {
     "turn_sign": 1,
     "turn_gain": 0.5,
@@ -19,12 +24,14 @@
     "arrival_radius_cm": 10
   },
   "actions": {
-    "zero": {"move": [0, 0], "hold_s": 2},
-    "forward": {"move": [0, 20], "hold_s": 1},
-    "forward_fast": {"move": [0, 40], "hold_s": 1},
-    "left": {"move": [-10, 0], "hold_s": 1},
-    "right": {"move": [10, 0], "hold_s": 1},
-    "left_forward": {"move": [-10, 20], "hold_s": 1},
-    "right_forward": {"move": [10, 20], "hold_s": 1}
+    "zero": {"waypoint": [0, 0], "hold_s": 2},
+    "forward_slow": {"waypoint": [0.2, 0], "hold_s": 1},
+    "forward": {"waypoint": [0.5, 0], "hold_s": 1},
+    "forward_saturated": {"waypoint": [1, 0], "hold_s": 1},
+    "left": {"waypoint": [0, -1], "hold_s": 1},
+    "right": {"waypoint": [0, 1], "hold_s": 1},
+    "left_forward": {"waypoint": [0.5, -0.1], "hold_s": 1},
+    "right_forward": {"waypoint": [0.5, 0.1], "hold_s": 1},
+    "right_forward_saturated": {"waypoint": [0.5, 0.5], "hold_s": 1}
   }
 }

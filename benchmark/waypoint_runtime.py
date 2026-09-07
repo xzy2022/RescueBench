@@ -7,6 +7,7 @@ import time
 
 from benchmark.core.env_manager import EnvManager
 from benchmark.teleport_probe_data import load_task_selection
+from benchmark.vint_waypoint_control import waypoint_to_move
 from benchmark.waypoint_control import (
     local_xy,
     waypoint_action,
@@ -316,12 +317,23 @@ class Experiment:
         self.send([0.0, 0.0], "head_restore_neutral", head_index=0)
         return {"origin_pose": origin_pose, "head_cases": results}
 
-    def run_actions(self, case_name, repeat):
-        """Measure one selected pulse from a fresh reset, followed by zero motion."""
+    def run_actions(self, case_name, repeat, origin, reset_comparison):
+        """Convert one waypoint, measure its pulse, then send zero motion."""
         case = self.plan["actions"][case_name]
+        conversion = self.plan["waypoint_conversion"]
+        move = waypoint_to_move(case["waypoint"], **conversion)
         before = self.sample("before_pulse")
-        self.send(case["move"], case_name)
-        self.observe(case["hold_s"], "pulse", case["move"] if repeat else None)
+        self.record(
+            "waypoint_conversion",
+            case=case_name,
+            waypoint=case["waypoint"],
+            normalize=conversion["normalize"],
+            max_v=conversion["max_v"],
+            rate_hz=conversion["rate_hz"],
+            move=move,
+        )
+        self.send(move, case_name)
+        self.observe(case["hold_s"], "pulse", move if repeat else None)
         pulse_end = self.sample("pulse_end")
         self.send([0.0, 0.0], "pulse_stop")
         self.observe(self.plan["stop_observe_s"], "after_stop")
@@ -329,6 +341,14 @@ class Experiment:
         return {
             "case": case_name,
             "repeat": repeat,
+            "reset_comparison": reset_comparison,
+            "operational_origin_pose": origin["actor_pose"],
+            "before_pulse_pose": before["actor_pose"],
+            "pulse_end_pose": pulse_end["actor_pose"],
+            "final_pose": after["actor_pose"],
+            "waypoint": case["waypoint"],
+            "waypoint_conversion": conversion,
+            "move": move,
             "pulse_displacement_local_cm": local_xy(
                 before["actor_pose"], pulse_end["actor_pose"]
             ),

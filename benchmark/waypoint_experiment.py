@@ -11,6 +11,8 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from benchmark.vint_waypoint_control import waypoint_to_move
+
 DEFAULTS = {
     "level": 0,
     "point_id": 0,
@@ -28,6 +30,11 @@ DEFAULTS = {
     "diagnostic_target_yaw_deg": 90.0,
     "rotation_axis_deg": 30.0,
     "frame": "start_local_cm",
+    "waypoint_conversion": {
+        "normalize": True,
+        "max_v": 0.2,
+        "rate_hz": 4.0,
+    },
     "controller": {
         "turn_sign": 1,
         "turn_gain": 0.5,
@@ -44,6 +51,10 @@ def read_plan(path):
     """Load explicit experiment inputs and the small set of controller defaults."""
     supplied = json.loads(path.read_text(encoding="utf-8-sig"))
     plan = {**DEFAULTS, **supplied}
+    plan["waypoint_conversion"] = {
+        **DEFAULTS["waypoint_conversion"],
+        **supplied.get("waypoint_conversion", {}),
+    }
     plan["controller"] = {**DEFAULTS["controller"], **supplied.get("controller", {})}
     if plan["frame"] not in ("start_local_cm", "world_cm"):
         raise ValueError("frame must be start_local_cm or world_cm")
@@ -138,7 +149,29 @@ def check_stage(plan, args):
         check_named_cases(plan.get("camera_rotation_cases"), "head_rotation", 3)
     if args.stage == "actions":
         case = plan["actions"][args.case]
-        turn, forward = case["move"]
+        waypoint = case.get("waypoint")
+        if not isinstance(waypoint, list) or len(waypoint) not in (2, 4):
+            raise ValueError("Action waypoint must contain 2 or 4 numbers")
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            for value in waypoint
+        ):
+            raise ValueError("Action waypoint must contain only finite numbers")
+        conversion = plan["waypoint_conversion"]
+        if not isinstance(conversion.get("normalize"), bool):
+            raise ValueError("waypoint_conversion.normalize must be boolean")
+        for name in ("max_v", "rate_hz"):
+            value = conversion.get(name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0
+            ):
+                raise ValueError(f"waypoint_conversion.{name} must be positive")
+        turn, forward = waypoint_to_move(case["waypoint"], **conversion)
         if not (-30 <= turn <= 30 and -100 <= forward <= 100):
             raise ValueError("Action outside Mixed limits")
         if not math.isfinite(case["hold_s"]) or case["hold_s"] <= 0:
@@ -241,7 +274,11 @@ def run_stage(args):
             "pose_order_assumption": ["x", "y", "z", "rotation0", "yaw", "rotation2"],
             "position_unit": "cm",
             "angle_unit": "degree",
-            "controller": "independent geometric controller; not NoMaD adapter",
+            "controller": (
+                "experiment copy of VINTAgent waypoint conversion"
+                if args.stage == "actions"
+                else "independent geometric controller; not NoMaD adapter"
+            ),
         },
     )
     runtime = importlib.import_module("benchmark.waypoint_runtime")
@@ -278,7 +315,9 @@ def run_stage(args):
             )
             result = diagnostics.run_camera_mount(experiment, origin)
         elif args.stage == "actions":
-            result = experiment.run_actions(selected_case, repeat_action)
+            result = experiment.run_actions(
+                selected_case, repeat_action, origin, reset_comparison
+            )
         else:
             result = experiment.follow(origin)
         summary = {"status": "finished", **result}
