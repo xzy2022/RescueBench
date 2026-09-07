@@ -30,6 +30,7 @@ DEFAULTS = {
     "diagnostic_target_yaw_deg": 90.0,
     "rotation_axis_deg": 30.0,
     "frame": "start_local_cm",
+    "follow_controller": "geometric",
     "waypoint_conversion": {
         "normalize": True,
         "max_v": 0.2,
@@ -44,6 +45,11 @@ DEFAULTS = {
         "turn_in_place_deg": 45.0,
         "arrival_radius_cm": 10.0,
     },
+    "waypoint_controller": {
+        "lookahead_cm": 30.0,
+        "cm_per_waypoint_unit": 100.0,
+        "arrival_radius_cm": 10.0,
+    },
 }
 
 
@@ -56,6 +62,10 @@ def read_plan(path):
         **supplied.get("waypoint_conversion", {}),
     }
     plan["controller"] = {**DEFAULTS["controller"], **supplied.get("controller", {})}
+    plan["waypoint_controller"] = {
+        **DEFAULTS["waypoint_controller"],
+        **supplied.get("waypoint_controller", {}),
+    }
     if plan["frame"] not in ("start_local_cm", "world_cm"):
         raise ValueError("frame must be start_local_cm or world_cm")
     for name in (
@@ -177,11 +187,17 @@ def check_stage(plan, args):
         if not math.isfinite(case["hold_s"]) or case["hold_s"] <= 0:
             raise ValueError("hold_s must be finite and positive")
     if args.stage == "follow":
+        if plan["follow_controller"] not in ("geometric", "waypoint"):
+            raise ValueError("follow_controller must be geometric or waypoint")
         if not plan["waypoints"]:
             raise ValueError("waypoints must contain at least one [x, y] point")
         for x, y in plan["waypoints"]:
             if not math.isfinite(x) or not math.isfinite(y):
                 raise ValueError("waypoints must be finite")
+        if plan["follow_controller"] == "waypoint":
+            for name, value in plan["waypoint_controller"].items():
+                if not math.isfinite(value) or value <= 0:
+                    raise ValueError(f"Invalid waypoint controller: {name}")
 
 
 def write_json(path, value):
@@ -231,6 +247,10 @@ def git_metadata(root, output):
 def run_stage(args):
     """Run exactly one stage; future stages require separate invocations."""
     plan = read_plan(args.plan)
+    if args.follow_controller is not None:
+        if args.stage != "follow":
+            raise ValueError("--follow-controller is only valid with --stage follow")
+        plan["follow_controller"] = args.follow_controller
     if args.level is not None:
         plan["level"] = args.level
     if args.point_id is not None:
@@ -277,7 +297,12 @@ def run_stage(args):
             "controller": (
                 "experiment copy of VINTAgent waypoint conversion"
                 if args.stage == "actions"
-                else "independent geometric controller; not NoMaD adapter"
+                else (
+                    "model-independent "
+                    f"{plan['follow_controller']} fixed-target controller"
+                    if args.stage == "follow"
+                    else "independent diagnostic controller; not NoMaD adapter"
+                )
             ),
         },
     )
@@ -367,6 +392,11 @@ def main():
         "--repeat",
         action="store_true",
         help="Resend selected action every sampling cycle",
+    )
+    run.add_argument(
+        "--follow-controller",
+        choices=("geometric", "waypoint"),
+        help="Fixed-target control arm; overrides follow_controller in the plan",
     )
     run.add_argument(
         "--preview", action="store_true", help="Print resolved input only; no simulator"

@@ -8,6 +8,7 @@
   "stop_observe_s": 2.0,
   "waypoint_timeout_s": 15.0,
   "frame": "start_local_cm",
+  "follow_controller": "geometric",
   "waypoints": [[100, 0], [200, 0], [200, 100]],
   "waypoint_conversion": {
     "normalize": true,
@@ -21,6 +22,11 @@
     "max_turn": 15,
     "max_forward": 30,
     "turn_in_place_deg": 45,
+    "arrival_radius_cm": 10
+  },
+  "waypoint_controller": {
+    "lookahead_cm": 30,
+    "cm_per_waypoint_unit": 100,
     "arrival_radius_cm": 10
   },
   "actions": {

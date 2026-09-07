@@ -11,6 +11,7 @@ from benchmark.vint_waypoint_control import waypoint_to_move
 from benchmark.waypoint_control import (
     local_xy,
     waypoint_action,
+    waypoint_style_action,
     world_waypoints,
     wrap_degrees,
 )
@@ -52,6 +53,8 @@ class Experiment:
         self.names = []
         self.camera_id = None
         self.last_sample = None
+        self.last_command_start = None
+        self.last_command_end = None
         self.task_context = None
 
     def now(self):
@@ -133,7 +136,7 @@ class Experiment:
         self.command_id += 1
         started = self.now()
         configured_head = self.head_value(head_index)
-        self.record(
+        command_start = self.record(
             "command_start",
             command_id=self.command_id,
             label=label,
@@ -146,7 +149,7 @@ class Experiment:
         )
         self.active_move = list(move)
         self.active_head = head_index
-        self.record(
+        command_end = self.record(
             "command_end",
             command_id=self.command_id,
             label=label,
@@ -157,6 +160,8 @@ class Experiment:
             terminated=bool(terminated),
             truncated=bool(truncated),
         )
+        self.last_command_start = command_start
+        self.last_command_end = command_end
         if terminated or truncated:
             raise RuntimeError(
                 "Environment terminated/truncated; inspect samples.jsonl"
@@ -363,16 +368,33 @@ class Experiment:
     def follow(self, origin):
         """Track fixed points in order; end the sequence at the first timeout."""
         targets = world_waypoints(self.plan, origin["actor_pose"])
-        self.record("route", origin_pose=origin["actor_pose"], targets_world_cm=targets)
+        controller_type = self.plan["follow_controller"]
+        self.record(
+            "route",
+            controller_type=controller_type,
+            origin_pose=origin["actor_pose"],
+            targets_world_cm=targets,
+        )
         results = []
+        cycle_index = 0
+        previous_control_start_s = None
+        stop_reference = None
         for index, target in enumerate(targets):
             started = self.now()
+            sample = self.sample("tracking_before", waypoint_index=index)
             while True:
                 tick = self.now()
-                sample = self.sample("tracking", waypoint_index=index)
-                decision = waypoint_action(
-                    sample["actor_pose"], target, self.plan["controller"]
-                )
+                if controller_type == "geometric":
+                    decision = waypoint_action(
+                        sample["actor_pose"], target, self.plan["controller"]
+                    )
+                else:
+                    decision = waypoint_style_action(
+                        sample["actor_pose"],
+                        target,
+                        self.plan["waypoint_controller"],
+                        self.plan["waypoint_conversion"],
+                    )
                 self.record(
                     "decision",
                     waypoint_index=index,
@@ -396,20 +418,90 @@ class Experiment:
                         flush=True,
                     )
                     self.send([0.0, 0.0], "waypoint_stop")
+                    stop_reference = sample
                     break
+                before = sample
+                cycle_index += 1
                 self.send(decision["move"], f"waypoint_{index}")
+                command_start = self.last_command_start["time_s"]
+                command_end = self.last_command_end["time_s"]
+                control_interval = (
+                    None
+                    if previous_control_start_s is None
+                    else command_start - previous_control_start_s
+                )
+                previous_control_start_s = command_start
                 time.sleep(max(0.0, tick + self.plan["period_s"] - self.now()))
+                sample = self.sample(
+                    "tracking_after",
+                    waypoint_index=index,
+                    cycle_index=cycle_index,
+                )
+                displacement_local = local_xy(
+                    before["actor_pose"], sample["actor_pose"][:2]
+                )
+                self.record(
+                    "control_step",
+                    controller_type=controller_type,
+                    command_id=self.last_command_start["command_id"],
+                    waypoint_index=index,
+                    cycle_index=cycle_index,
+                    target_world_cm=decision["target_world_cm"],
+                    local_error_cm=decision["local_error_cm"],
+                    distance_cm=decision["distance_cm"],
+                    heading_error_deg=decision["heading_error_deg"],
+                    waypoint=decision["waypoint"],
+                    waypoint_conversion=decision["waypoint_conversion"],
+                    move=decision["move"],
+                    before_sample_time_s=before["time_s"],
+                    before_actor_pose=before["actor_pose"],
+                    command_start_s=command_start,
+                    command_end_s=command_end,
+                    requested_period_s=self.plan["period_s"],
+                    actual_control_interval_s=control_interval,
+                    after_sample_time_s=sample["time_s"],
+                    after_actor_pose=sample["actor_pose"],
+                    command_to_sample_s=sample["time_s"] - command_start,
+                    displacement_local_cm=displacement_local,
+                    displacement_cm=math.hypot(*displacement_local),
+                    yaw_delta_deg=wrap_degrees(
+                        sample["actor_pose"][4] - before["actor_pose"][4]
+                    ),
+                )
             if status == "timeout":
                 break
         self.observe(self.plan["stop_observe_s"], "after_stop")
         final = self.sample("final")
+        stop_displacement = (
+            math.dist(final["actor_pose"][:2], stop_reference["actor_pose"][:2])
+            if stop_reference is not None
+            else None
+        )
+        stop_yaw_delta = (
+            wrap_degrees(final["actor_pose"][4] - stop_reference["actor_pose"][4])
+            if stop_reference is not None
+            else None
+        )
+        self.record(
+            "stop_result",
+            controller_type=controller_type,
+            reference_pose=(
+                stop_reference["actor_pose"] if stop_reference is not None else None
+            ),
+            final_pose=final["actor_pose"],
+            displacement_cm=stop_displacement,
+            yaw_delta_deg=stop_yaw_delta,
+        )
         return {
+            "controller_type": controller_type,
             "waypoints": results,
             "all_reached": len(results) == len(targets)
             and all(row["status"] == "reached" for row in results),
             "final_distance_to_last_target_cm": math.dist(
                 final["actor_pose"][:2], targets[-1]
             ),
+            "after_stop_displacement_cm": stop_displacement,
+            "after_stop_yaw_delta_deg": stop_yaw_delta,
         }
 
     def close(self):

@@ -15,6 +15,7 @@ def report(samples_path, output):
     samples = [row for row in rows if row["event"] == "sample"]
     decisions = [row for row in rows if row["event"] == "decision"]
     commands = [row for row in rows if row["event"] == "command_end"]
+    control_steps = [row for row in rows if row["event"] == "control_step"]
     if not samples:
         raise ValueError("No pose samples in the selected log")
     output.mkdir(parents=True, exist_ok=True)
@@ -58,6 +59,74 @@ def report(samples_path, output):
                     row["time_s"] - row["read_started_s"],
                 ]
             )
+    if control_steps:
+        with (output / "control_steps.csv").open(
+            "w", encoding="utf-8", newline=""
+        ) as stream:
+            writer = csv.writer(stream)
+            writer.writerow(
+                [
+                    "controller_type",
+                    "command_id",
+                    "waypoint_index",
+                    "cycle_index",
+                    "before_time_s",
+                    "command_start_s",
+                    "command_end_s",
+                    "after_time_s",
+                    "requested_period_s",
+                    "actual_control_interval_s",
+                    "command_duration_s",
+                    "command_to_sample_s",
+                    "distance_cm",
+                    "heading_error_deg",
+                    "waypoint_x",
+                    "waypoint_y",
+                    "turn_command",
+                    "forward_command",
+                    "before_x_cm",
+                    "before_y_cm",
+                    "before_yaw_deg",
+                    "after_x_cm",
+                    "after_y_cm",
+                    "after_yaw_deg",
+                    "displacement_forward_cm",
+                    "displacement_lateral_cm",
+                    "displacement_cm",
+                    "yaw_delta_deg",
+                ]
+            )
+            for row in control_steps:
+                waypoint = row.get("waypoint") or [None, None]
+                writer.writerow(
+                    [
+                        row["controller_type"],
+                        row["command_id"],
+                        row["waypoint_index"],
+                        row["cycle_index"],
+                        row["before_sample_time_s"],
+                        row["command_start_s"],
+                        row["command_end_s"],
+                        row["after_sample_time_s"],
+                        row["requested_period_s"],
+                        row["actual_control_interval_s"],
+                        row["command_end_s"] - row["command_start_s"],
+                        row["command_to_sample_s"],
+                        row["distance_cm"],
+                        row["heading_error_deg"],
+                        *waypoint[:2],
+                        *row["move"],
+                        row["before_actor_pose"][0],
+                        row["before_actor_pose"][1],
+                        row["before_actor_pose"][4],
+                        row["after_actor_pose"][0],
+                        row["after_actor_pose"][1],
+                        row["after_actor_pose"][4],
+                        *row["displacement_local_cm"],
+                        row["displacement_cm"],
+                        row["yaw_delta_deg"],
+                    ]
+                )
     matplotlib = importlib.import_module("matplotlib")
     matplotlib.use("Agg")
     plt = importlib.import_module("matplotlib.pyplot")
@@ -126,4 +195,44 @@ def report(samples_path, output):
     figure.tight_layout()
     figure.savefig(output / "overview.png", dpi=160)
     plt.close(figure)
+    if control_steps:
+        diagnostics, axes = plt.subplots(2, 2, figsize=(12, 8))
+        heading_axes, interval_axes, yaw_step_axes, displacement_axes = axes.flat
+        times = [row["command_start_s"] for row in control_steps]
+        heading_axes.plot(
+            times,
+            [row["heading_error_deg"] for row in control_steps],
+            ".-",
+            label="heading error",
+        )
+        heading_axes.plot(
+            times,
+            [row["move"][0] for row in control_steps],
+            ".-",
+            label="turn command",
+        )
+        heading_axes.set(xlabel="Wall time (s)", ylabel="Degrees / command")
+        heading_axes.legend()
+        interval_rows = [
+            row for row in control_steps if row["actual_control_interval_s"] is not None
+        ]
+        interval_axes.plot(
+            [row["command_start_s"] for row in interval_rows],
+            [row["actual_control_interval_s"] for row in interval_rows],
+            ".-",
+        )
+        interval_axes.set(xlabel="Wall time (s)", ylabel="Actual interval (s)")
+        yaw_step_axes.plot(times, [row["yaw_delta_deg"] for row in control_steps], ".-")
+        yaw_step_axes.set(xlabel="Wall time (s)", ylabel="Yaw delta per command (deg)")
+        displacement_axes.plot(
+            times, [row["displacement_cm"] for row in control_steps], ".-"
+        )
+        displacement_axes.set(
+            xlabel="Wall time (s)", ylabel="Displacement per command (cm)"
+        )
+        for axis in axes.flat:
+            axis.grid(alpha=0.25)
+        diagnostics.tight_layout()
+        diagnostics.savefig(output / "control_diagnostics.png", dpi=160)
+        plt.close(diagnostics)
     print(f"Report: {output.resolve()}")

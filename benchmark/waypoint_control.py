@@ -2,6 +2,8 @@
 
 import math
 
+from benchmark.vint_waypoint_control import waypoint_to_move
+
 
 def wrap_degrees(angle):
     """Return a signed angle in [-180, 180)."""
@@ -32,11 +34,17 @@ def world_waypoints(plan, origin):
     ]
 
 
-def waypoint_action(pose, target, controller):
-    """Return Mixed move commands and geometry; command units are not SI speed."""
+def target_geometry(pose, target):
+    """Return the fixed target error in the actor's current local frame."""
     forward, lateral = local_xy(pose, target)
     distance = math.hypot(forward, lateral)
     heading = math.degrees(math.atan2(lateral, forward))
+    return forward, lateral, distance, heading
+
+
+def waypoint_action(pose, target, controller):
+    """Return geometric-controller Mixed commands and current target geometry."""
+    forward, lateral, distance, heading = target_geometry(pose, target)
     turn = controller["turn_sign"] * controller["turn_gain"] * heading
     turn = max(-controller["max_turn"], min(controller["max_turn"], turn))
     velocity = min(controller["max_forward"], controller["forward_gain"] * distance)
@@ -45,10 +53,38 @@ def waypoint_action(pose, target, controller):
         velocity = 0.0
     reached = distance <= controller["arrival_radius_cm"]
     return {
+        "controller_type": "geometric",
         "target_world_cm": list(target),
         "local_error_cm": [forward, lateral],
         "distance_cm": distance,
         "heading_error_deg": heading,
+        "waypoint": None,
+        "waypoint_conversion": None,
         "reached": reached,
         "move": [0.0, 0.0] if reached else [turn, velocity],
+    }
+
+
+def waypoint_style_action(pose, target, controller, conversion):
+    """Generate a model-free waypoint, then apply the copied VINT conversion."""
+    forward, lateral, distance, heading = target_geometry(pose, target)
+    reached = distance <= controller["arrival_radius_cm"]
+    if reached:
+        waypoint = [0.0, 0.0]
+        move = [0.0, 0.0]
+    else:
+        lookahead_cm = min(distance, controller["lookahead_cm"])
+        scale = lookahead_cm / distance / controller["cm_per_waypoint_unit"]
+        waypoint = [forward * scale, lateral * scale]
+        move = waypoint_to_move(waypoint, **conversion)
+    return {
+        "controller_type": "waypoint",
+        "target_world_cm": list(target),
+        "local_error_cm": [forward, lateral],
+        "distance_cm": distance,
+        "heading_error_deg": heading,
+        "waypoint": waypoint,
+        "waypoint_conversion": dict(conversion),
+        "reached": reached,
+        "move": move,
     }
