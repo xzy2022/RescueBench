@@ -25,6 +25,7 @@ DEFAULTS = {
     "force_hold_s": 2.0,
     "release_observe_s": 1.0,
     "camera_mount_observe_s": 1.0,
+    "open_loop_sample_period_s": 0.05,
     "stop_observe_s": 2.0,
     "waypoint_timeout_s": 15.0,
     "diagnostic_target_yaw_deg": 90.0,
@@ -77,6 +78,7 @@ def read_plan(path):
         "force_hold_s",
         "release_observe_s",
         "camera_mount_observe_s",
+        "open_loop_sample_period_s",
         "stop_observe_s",
         "waypoint_timeout_s",
     ):
@@ -123,6 +125,43 @@ def check_named_cases(cases, value_name, value_length=None):
             raise ValueError(f"{case_id}.{value_name} must be finite")
 
 
+def check_waypoint_case(case, conversion, duration_name, allowed_lengths):
+    """Validate one raw waypoint pulse without assigning it a physical unit."""
+    waypoint = case.get("waypoint")
+    if not isinstance(waypoint, list) or len(waypoint) not in allowed_lengths:
+        expected = " or ".join(str(length) for length in allowed_lengths)
+        raise ValueError(f"Waypoint must contain {expected} numbers")
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        for value in waypoint
+    ):
+        raise ValueError("Waypoint must contain only finite numbers")
+    if not isinstance(conversion.get("normalize"), bool):
+        raise ValueError("waypoint_conversion.normalize must be boolean")
+    for name in ("max_v", "rate_hz"):
+        value = conversion.get(name)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+        ):
+            raise ValueError(f"waypoint_conversion.{name} must be positive")
+    turn, forward = waypoint_to_move(waypoint, **conversion)
+    if not (-30 <= turn <= 30 and -100 <= forward <= 100):
+        raise ValueError("Action outside Mixed limits")
+    duration = case.get(duration_name)
+    if (
+        isinstance(duration, bool)
+        or not isinstance(duration, (int, float))
+        or not math.isfinite(duration)
+        or duration <= 0
+    ):
+        raise ValueError(f"{duration_name} must be finite and positive")
+
+
 def check_stage(plan, args):
     """Check the selected stage's required inputs before launching UE."""
     if args.stage == "position":
@@ -159,33 +198,19 @@ def check_stage(plan, args):
         check_named_cases(plan.get("camera_rotation_cases"), "head_rotation", 3)
     if args.stage == "actions":
         case = plan["actions"][args.case]
-        waypoint = case.get("waypoint")
-        if not isinstance(waypoint, list) or len(waypoint) not in (2, 4):
-            raise ValueError("Action waypoint must contain 2 or 4 numbers")
-        if any(
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-            for value in waypoint
-        ):
-            raise ValueError("Action waypoint must contain only finite numbers")
-        conversion = plan["waypoint_conversion"]
-        if not isinstance(conversion.get("normalize"), bool):
-            raise ValueError("waypoint_conversion.normalize must be boolean")
-        for name in ("max_v", "rate_hz"):
-            value = conversion.get(name)
-            if (
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or not math.isfinite(value)
-                or value <= 0
-            ):
-                raise ValueError(f"waypoint_conversion.{name} must be positive")
-        turn, forward = waypoint_to_move(case["waypoint"], **conversion)
-        if not (-30 <= turn <= 30 and -100 <= forward <= 100):
-            raise ValueError("Action outside Mixed limits")
-        if not math.isfinite(case["hold_s"]) or case["hold_s"] <= 0:
-            raise ValueError("hold_s must be finite and positive")
+        check_waypoint_case(
+            case, plan["waypoint_conversion"], "hold_s", allowed_lengths=(2, 4)
+        )
+    if args.stage == "open_loop":
+        cases = plan.get("open_loop_cases")
+        if not isinstance(cases, dict) or args.case not in cases:
+            raise ValueError("--case must select one entry from open_loop_cases")
+        check_waypoint_case(
+            cases[args.case],
+            plan["waypoint_conversion"],
+            "pulse_s",
+            allowed_lengths=(2,),
+        )
     if args.stage == "follow":
         if plan["follow_controller"] not in ("geometric", "waypoint"):
             raise ValueError("follow_controller must be geometric or waypoint")
@@ -256,7 +281,9 @@ def run_stage(args):
     if args.point_id is not None:
         plan["point_id"] = args.point_id
     check_stage(plan, args)
-    selected_case = args.case if args.stage in ("actions", "yaw_diagnosis") else None
+    selected_case = (
+        args.case if args.stage in ("actions", "open_loop", "yaw_diagnosis") else None
+    )
     repeat_action = bool(args.repeat) if args.stage == "actions" else False
     if args.preview:
         print(
@@ -296,7 +323,7 @@ def run_stage(args):
             "angle_unit": "degree",
             "controller": (
                 "experiment copy of VINTAgent waypoint conversion"
-                if args.stage == "actions"
+                if args.stage in ("actions", "open_loop")
                 else (
                     "model-independent "
                     f"{plan['follow_controller']} fixed-target controller"
@@ -343,6 +370,11 @@ def run_stage(args):
             result = experiment.run_actions(
                 selected_case, repeat_action, origin, reset_comparison
             )
+        elif args.stage == "open_loop":
+            open_loop = importlib.import_module("benchmark.waypoint_open_loop")
+            result = open_loop.run_open_loop(
+                experiment, origin, selected_case, reset_comparison
+            )
         else:
             result = experiment.follow(origin)
         summary = {"status": "finished", **result}
@@ -377,6 +409,7 @@ def main():
             "rotation_axes",
             "camera_mount",
             "actions",
+            "open_loop",
             "follow",
         ),
         required=True,

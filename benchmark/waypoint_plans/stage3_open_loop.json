@@ -1,0 +1,31 @@
+{
+  "level": 0,
+  "point_id": 0,
+  "resolution": [320, 320],
+  "period_s": 0.2,
+  "settle_s": 2.0,
+  "open_loop_sample_period_s": 0.05,
+  "stop_observe_s": 2.0,
+  "waypoint_conversion": {
+    "normalize": true,
+    "max_v": 0.2,
+    "rate_hz": 4.0
+  },
+  "open_loop_cases": {
+    "zero": {"waypoint": [0.0, 0.0], "pulse_s": 0.25},
+    "dx010": {"waypoint": [0.1, 0.0], "pulse_s": 0.25},
+    "dx020": {"waypoint": [0.2, 0.0], "pulse_s": 0.25},
+    "dx050": {"waypoint": [0.5, 0.0], "pulse_s": 0.25},
+    "dx100": {"waypoint": [1.0, 0.0], "pulse_s": 0.25},
+    "dx020_dy_neg020": {"waypoint": [0.2, -0.2], "pulse_s": 0.25},
+    "dx020_dy_neg010": {"waypoint": [0.2, -0.1], "pulse_s": 0.25},
+    "dx020_dy_neg005": {"waypoint": [0.2, -0.05], "pulse_s": 0.25},
+    "dx020_dy_pos005": {"waypoint": [0.2, 0.05], "pulse_s": 0.25},
+    "dx020_dy_pos010": {"waypoint": [0.2, 0.1], "pulse_s": 0.25},
+    "dx020_dy_pos020": {"waypoint": [0.2, 0.2], "pulse_s": 0.25},
+    "dy_neg020": {"waypoint": [0.0, -0.2], "pulse_s": 0.25},
+    "dy_pos020": {"waypoint": [0.0, 0.2], "pulse_s": 0.25},
+    "dx020_t0125": {"waypoint": [0.2, 0.0], "pulse_s": 0.125},
+    "dx020_t0500": {"waypoint": [0.2, 0.0], "pulse_s": 0.5}
+  }
+}
