@@ -57,7 +57,10 @@ def create_base_parser(
         type=str,
         default="UnrealRescue-FlexibleRoom",
         choices=env_choices,
-        help=_advanced_help("Environment id fallback when test_jsonl does not provide env_id", expose_advanced),
+        help=_advanced_help(
+            "Environment id fallback when test_jsonl does not provide env_id",
+            expose_advanced,
+        ),
     )
     parser.add_argument(
         "--resolution",
@@ -93,11 +96,27 @@ def create_base_parser(
         default=1,
         help="Number of episodes per test point",
     )
-    parser.add_argument("--no-collision", action="store_true", help="Disable collision detection")
-    parser.add_argument("--enable-trajectory", action="store_true", help="Record trajectories")
-    parser.add_argument("--enable-similarity", action="store_true", help="Compute trajectory similarity")
-    parser.add_argument("--human-traj-dir", type=str, default=None, help="Directory containing human trajectory jsonl files")
-    parser.add_argument("--ref-trajectories", type=str, default=None, help="Reference trajectory JSON file or jsonl directory")
+    parser.add_argument(
+        "--no-collision", action="store_true", help="Disable collision detection"
+    )
+    parser.add_argument(
+        "--enable-trajectory", action="store_true", help="Record trajectories"
+    )
+    parser.add_argument(
+        "--enable-similarity", action="store_true", help="Compute trajectory similarity"
+    )
+    parser.add_argument(
+        "--human-traj-dir",
+        type=str,
+        default=None,
+        help="Directory containing human trajectory jsonl files",
+    )
+    parser.add_argument(
+        "--ref-trajectories",
+        type=str,
+        default=None,
+        help="Reference trajectory JSON file or jsonl directory",
+    )
     parser.add_argument(
         "--similarity-method",
         type=str,
@@ -105,7 +124,9 @@ def create_base_parser(
         choices=["dtw", "frechet", "hausdorff"],
         help=_advanced_help("Trajectory similarity method", expose_advanced),
     )
-    parser.add_argument("--output", type=str, default="./benchmark_results", help="Output directory")
+    parser.add_argument(
+        "--output", type=str, default="./benchmark_results", help="Output directory"
+    )
     parser.add_argument(
         "--resume-jsonl",
         type=str,
@@ -126,10 +147,24 @@ def create_base_parser(
     )
     parser.add_argument("--render", action="store_true", help="Save render frames")
     parser.add_argument(
+        "--enable-nomad-diagnostics",
+        action="store_true",
+        help="Record aligned NoMaD inputs, predictions, actions and live poses",
+    )
+    parser.add_argument(
+        "--diagnostic-tensor-every",
+        type=int,
+        default=5,
+        help="Capture preprocessed diagnostic tensors every N steps; raw frames log every step",
+    )
+    parser.add_argument(
         "--save-frame-every",
         type=int,
         default=5,
-        help=_advanced_help("Save one historical render frame every N steps when rendering is enabled", expose_advanced),
+        help=_advanced_help(
+            "Save one historical render frame every N steps when rendering is enabled",
+            expose_advanced,
+        ),
     )
     parser.add_argument(
         "--save-video",
@@ -148,37 +183,50 @@ def create_base_parser(
         "--rescue-distance",
         type=float,
         default=100.0,
-        help=_advanced_help("XY distance threshold for carry interaction (cm)", expose_advanced),
+        help=_advanced_help(
+            "XY distance threshold for carry interaction (cm)", expose_advanced
+        ),
     )
     parser.add_argument(
         "--place-distance",
         type=float,
         default=200.0,
-        help=_advanced_help("XY distance threshold for drop interaction (cm)", expose_advanced),
+        help=_advanced_help(
+            "XY distance threshold for drop interaction (cm)", expose_advanced
+        ),
     )
     parser.add_argument(
         "--interaction-z-threshold",
         type=float,
         default=220.0,
-        help=_advanced_help("Maximum Z gap allowed for interaction (cm)", expose_advanced),
+        help=_advanced_help(
+            "Maximum Z gap allowed for interaction (cm)", expose_advanced
+        ),
     )
     parser.add_argument(
         "--stage2-success-radius",
         type=float,
         default=200.0,
-        help=_advanced_help("Stage-2 success radius (XY, cm), also gated by Z threshold", expose_advanced),
+        help=_advanced_help(
+            "Stage-2 success radius (XY, cm), also gated by Z threshold",
+            expose_advanced,
+        ),
     )
     parser.add_argument(
         "--passthrough",
         action="store_true",
         default=False,
-        help=_advanced_help("Passthrough mode: the model controls interaction actions", expose_advanced),
+        help=_advanced_help(
+            "Passthrough mode: the model controls interaction actions", expose_advanced
+        ),
     )
     parser.add_argument(
         "--no-passthrough",
         dest="passthrough",
         action="store_false",
-        help=_advanced_help("Active state-machine mode: benchmark inserts carry/drop", expose_advanced),
+        help=_advanced_help(
+            "Active state-machine mode: benchmark inserts carry/drop", expose_advanced
+        ),
     )
     parser.set_defaults(passthrough_env_term_geometry_sync=True)
     parser.add_argument(
@@ -186,7 +234,10 @@ def create_base_parser(
         "--passthrough-env-term-geometry-sync",
         dest="passthrough_env_term_geometry_sync",
         action="store_true",
-        help=_advanced_help("Use final-position geometry to sync stage 2 when UE terminates first", expose_advanced),
+        help=_advanced_help(
+            "Use final-position geometry to sync stage 2 when UE terminates first",
+            expose_advanced,
+        ),
     )
     parser.add_argument(
         "--no-passthrough-env-term-sync",
@@ -225,73 +276,323 @@ def create_base_parser(
     return parser
 
 
-def add_model_args(parser: argparse.ArgumentParser, expose_advanced: bool = False) -> None:
+def add_model_args(
+    parser: argparse.ArgumentParser, expose_advanced: bool = False
+) -> None:
     """Add model adapter args used by the unified CLI.
 
     Individual legacy launchers may still define their own focused subset.
     """
 
-    parser.add_argument("--topomap-dir", type=str, default=None, help="ViNT/NOMAD topomap directory")
-    parser.add_argument("--waypoint-idx", type=int, default=None, help=_advanced_help("ViNT/NOMAD waypoint index", expose_advanced))
-    parser.add_argument("--yolo-weights", type=str, default=None, help="NOMAD-YOLO weights")
-    parser.add_argument("--yolo-conf", type=float, default=None, help=_advanced_help("YOLO confidence", expose_advanced))
-    parser.add_argument("--no-yolo-correction", action="store_true", help=_advanced_help("Disable YOLO correction", expose_advanced))
-    parser.add_argument("--yolo-blend-ratio", type=float, default=None, help=_advanced_help("YOLO correction blend ratio", expose_advanced))
+    parser.add_argument(
+        "--topomap-dir", type=str, default=None, help="ViNT/NOMAD topomap directory"
+    )
+    parser.add_argument(
+        "--waypoint-idx",
+        type=int,
+        default=None,
+        help=_advanced_help("ViNT/NOMAD waypoint index", expose_advanced),
+    )
+    parser.add_argument(
+        "--yolo-weights", type=str, default=None, help="NOMAD-YOLO weights"
+    )
+    parser.add_argument(
+        "--yolo-conf",
+        type=float,
+        default=None,
+        help=_advanced_help("YOLO confidence", expose_advanced),
+    )
+    parser.add_argument(
+        "--no-yolo-correction",
+        action="store_true",
+        help=_advanced_help("Disable YOLO correction", expose_advanced),
+    )
+    parser.add_argument(
+        "--yolo-blend-ratio",
+        type=float,
+        default=None,
+        help=_advanced_help("YOLO correction blend ratio", expose_advanced),
+    )
 
-    parser.add_argument("--ckpt-path", type=str, default=None, help="ROCKET / R2ZeroShot ckpt")
+    parser.add_argument(
+        "--ckpt-path", type=str, default=None, help="ROCKET / R2ZeroShot ckpt"
+    )
     parser.add_argument("--sa2va-path", type=str, default=None, help="Sa2VA path")
-    parser.add_argument("--no-sa2va", action="store_true", help=_advanced_help("Disable Sa2VA", expose_advanced))
-    parser.add_argument("--cfg-coef", type=float, default=None, help=_advanced_help("ROCKET CFG coef", expose_advanced))
-    parser.add_argument("--person-ref-path", type=str, default=None, help="Person reference image")
+    parser.add_argument(
+        "--no-sa2va",
+        action="store_true",
+        help=_advanced_help("Disable Sa2VA", expose_advanced),
+    )
+    parser.add_argument(
+        "--cfg-coef",
+        type=float,
+        default=None,
+        help=_advanced_help("ROCKET CFG coef", expose_advanced),
+    )
+    parser.add_argument(
+        "--person-ref-path", type=str, default=None, help="Person reference image"
+    )
 
     parser.add_argument("--workspace", type=str, default=None, help="Apex workspace")
-    parser.add_argument("--model-path", type=str, default=None, help="Model weight file or directory")
+    parser.add_argument(
+        "--model-path", type=str, default=None, help="Model weight file or directory"
+    )
 
-    parser.add_argument("--config-path", type=str, default=None, help="CityWalker config path")
-    parser.add_argument("--checkpoint-path", type=str, default=None, help="CityWalker checkpoint path")
-    parser.add_argument("--citywalker-config-path", type=str, default=None, help="SeePointFly: CityWalker config path")
-    parser.add_argument("--citywalker-checkpoint-path", type=str, default=None, help="SeePointFly: CityWalker checkpoint path")
-    parser.add_argument("--spf-config-path", type=str, default=None, help="SeePointFly config path")
-    parser.add_argument("--citywalker-resolution", type=int, nargs=2, default=None, help=_advanced_help("SeePointFly: CityWalker crop resolution", expose_advanced))
-    parser.add_argument("--step-scale", type=float, default=None, help=_advanced_help("CityWalker input normalization scale", expose_advanced))
-    parser.add_argument("--plane-mode", type=str, default=None, choices=["xy", "xz"], help=_advanced_help("CityWalker ground plane", expose_advanced))
-    parser.add_argument("--rgb-input", action="store_true", help=_advanced_help("Input is already RGB; disable default BGR-to-RGB conversion", expose_advanced))
-    parser.add_argument("--disable-near-goal-push", action="store_true", help=_advanced_help("Disable CityWalker near-goal push", expose_advanced))
-    parser.add_argument("--fine-injured-push-start-cm", type=float, default=None, help=_advanced_help("Near-goal push start threshold for injured target", expose_advanced))
-    parser.add_argument("--fine-stretcher-push-start-cm", type=float, default=None, help=_advanced_help("Near-goal push start threshold for stretcher target", expose_advanced))
-    parser.add_argument("--near-goal-push-min-speed", type=float, default=None, help=_advanced_help("Minimum speed for near-goal push", expose_advanced))
-    parser.add_argument("--near-goal-push-align-angle-deg", type=float, default=None, help=_advanced_help("Alignment angle threshold for near-goal push", expose_advanced))
-    parser.add_argument("--near-goal-push-stop-margin-cm", type=float, default=None, help=_advanced_help("Stop near-goal push this close to the interaction threshold", expose_advanced))
+    parser.add_argument(
+        "--config-path", type=str, default=None, help="CityWalker config path"
+    )
+    parser.add_argument(
+        "--checkpoint-path", type=str, default=None, help="CityWalker checkpoint path"
+    )
+    parser.add_argument(
+        "--citywalker-config-path",
+        type=str,
+        default=None,
+        help="SeePointFly: CityWalker config path",
+    )
+    parser.add_argument(
+        "--citywalker-checkpoint-path",
+        type=str,
+        default=None,
+        help="SeePointFly: CityWalker checkpoint path",
+    )
+    parser.add_argument(
+        "--spf-config-path", type=str, default=None, help="SeePointFly config path"
+    )
+    parser.add_argument(
+        "--citywalker-resolution",
+        type=int,
+        nargs=2,
+        default=None,
+        help=_advanced_help("SeePointFly: CityWalker crop resolution", expose_advanced),
+    )
+    parser.add_argument(
+        "--step-scale",
+        type=float,
+        default=None,
+        help=_advanced_help("CityWalker input normalization scale", expose_advanced),
+    )
+    parser.add_argument(
+        "--plane-mode",
+        type=str,
+        default=None,
+        choices=["xy", "xz"],
+        help=_advanced_help("CityWalker ground plane", expose_advanced),
+    )
+    parser.add_argument(
+        "--rgb-input",
+        action="store_true",
+        help=_advanced_help(
+            "Input is already RGB; disable default BGR-to-RGB conversion",
+            expose_advanced,
+        ),
+    )
+    parser.add_argument(
+        "--disable-near-goal-push",
+        action="store_true",
+        help=_advanced_help("Disable CityWalker near-goal push", expose_advanced),
+    )
+    parser.add_argument(
+        "--fine-injured-push-start-cm",
+        type=float,
+        default=None,
+        help=_advanced_help(
+            "Near-goal push start threshold for injured target", expose_advanced
+        ),
+    )
+    parser.add_argument(
+        "--fine-stretcher-push-start-cm",
+        type=float,
+        default=None,
+        help=_advanced_help(
+            "Near-goal push start threshold for stretcher target", expose_advanced
+        ),
+    )
+    parser.add_argument(
+        "--near-goal-push-min-speed",
+        type=float,
+        default=None,
+        help=_advanced_help("Minimum speed for near-goal push", expose_advanced),
+    )
+    parser.add_argument(
+        "--near-goal-push-align-angle-deg",
+        type=float,
+        default=None,
+        help=_advanced_help(
+            "Alignment angle threshold for near-goal push", expose_advanced
+        ),
+    )
+    parser.add_argument(
+        "--near-goal-push-stop-margin-cm",
+        type=float,
+        default=None,
+        help=_advanced_help(
+            "Stop near-goal push this close to the interaction threshold",
+            expose_advanced,
+        ),
+    )
 
-    parser.add_argument("--drone-trigger-radius-m", type=float, default=None, help=_advanced_help("SeePointFly handoff radius in meters", expose_advanced))
-    parser.add_argument("--drone-trigger-height-m", type=float, default=None, help=_advanced_help("SeePointFly handoff height in meters", expose_advanced))
-    parser.add_argument("--drone-height-offset-cm", type=float, default=None, help=_advanced_help("Drone initial height offset in cm", expose_advanced))
-    parser.add_argument("--drone-max-speed", type=float, default=None, help=_advanced_help("SeePointFly drone max speed", expose_advanced))
-    parser.add_argument("--drone-max-z-speed", type=float, default=None, help=_advanced_help("SeePointFly drone max z speed", expose_advanced))
-    parser.add_argument("--drone-max-yaw", type=float, default=None, help=_advanced_help("SeePointFly drone max yaw", expose_advanced))
-    parser.add_argument("--drone-search-yaw", type=float, default=None, help=_advanced_help("Fallback drone search yaw", expose_advanced))
+    parser.add_argument(
+        "--drone-trigger-radius-m",
+        type=float,
+        default=None,
+        help=_advanced_help("SeePointFly handoff radius in meters", expose_advanced),
+    )
+    parser.add_argument(
+        "--drone-trigger-height-m",
+        type=float,
+        default=None,
+        help=_advanced_help("SeePointFly handoff height in meters", expose_advanced),
+    )
+    parser.add_argument(
+        "--drone-height-offset-cm",
+        type=float,
+        default=None,
+        help=_advanced_help("Drone initial height offset in cm", expose_advanced),
+    )
+    parser.add_argument(
+        "--drone-max-speed",
+        type=float,
+        default=None,
+        help=_advanced_help("SeePointFly drone max speed", expose_advanced),
+    )
+    parser.add_argument(
+        "--drone-max-z-speed",
+        type=float,
+        default=None,
+        help=_advanced_help("SeePointFly drone max z speed", expose_advanced),
+    )
+    parser.add_argument(
+        "--drone-max-yaw",
+        type=float,
+        default=None,
+        help=_advanced_help("SeePointFly drone max yaw", expose_advanced),
+    )
+    parser.add_argument(
+        "--drone-search-yaw",
+        type=float,
+        default=None,
+        help=_advanced_help("Fallback drone search yaw", expose_advanced),
+    )
 
-    parser.add_argument("--forward-velocity", type=float, default=None, help=_advanced_help("Discrete forward velocity / waypoint speed cap", expose_advanced))
-    parser.add_argument("--turn-angle", type=float, default=None, help=_advanced_help("Discrete turn angle", expose_advanced))
-    parser.add_argument("--turn-velocity", type=float, default=None, help=_advanced_help("Forward velocity while turning", expose_advanced))
+    parser.add_argument(
+        "--forward-velocity",
+        type=float,
+        default=None,
+        help=_advanced_help(
+            "Discrete forward velocity / waypoint speed cap", expose_advanced
+        ),
+    )
+    parser.add_argument(
+        "--turn-angle",
+        type=float,
+        default=None,
+        help=_advanced_help("Discrete turn angle", expose_advanced),
+    )
+    parser.add_argument(
+        "--turn-velocity",
+        type=float,
+        default=None,
+        help=_advanced_help("Forward velocity while turning", expose_advanced),
+    )
     parser.set_defaults(reset_on_phase_switch=True)
-    parser.add_argument("--no-reset-on-phase-switch", dest="reset_on_phase_switch", action="store_false", help=_advanced_help("Keep Uni-NaVid context across phase switches", expose_advanced))
-    parser.add_argument("--phase2-instruction", type=str, default=None, help=_advanced_help("Uni-NaVid phase-2 instruction text", expose_advanced))
+    parser.add_argument(
+        "--no-reset-on-phase-switch",
+        dest="reset_on_phase_switch",
+        action="store_false",
+        help=_advanced_help(
+            "Keep Uni-NaVid context across phase switches", expose_advanced
+        ),
+    )
+    parser.add_argument(
+        "--phase2-instruction",
+        type=str,
+        default=None,
+        help=_advanced_help("Uni-NaVid phase-2 instruction text", expose_advanced),
+    )
 
-    parser.add_argument("--inference-mode", choices=["waypoint", "text"], default=None, help=_advanced_help("OmniNav inference mode", expose_advanced))
-    parser.add_argument("--attn-implementation", type=str, default=None, help=_advanced_help("OmniNav attention implementation", expose_advanced))
-    parser.add_argument("--disable-multi-view", action="store_true", help=_advanced_help("Disable OmniNav multi-view sampling", expose_advanced))
-    parser.add_argument("--view-angles", type=float, nargs="+", default=None, help=_advanced_help("OmniNav multi-view angles", expose_advanced))
-    parser.add_argument("--view-settle-time", type=float, default=None, help=_advanced_help("OmniNav view-settle time in seconds", expose_advanced))
-    parser.add_argument("--waypoint-dist-scale", type=float, default=None, help=_advanced_help("OmniNav waypoint distance scale", expose_advanced))
-    parser.add_argument("--waypoint-speed-floor", type=float, default=None, help=_advanced_help("OmniNav waypoint speed floor", expose_advanced))
-    parser.add_argument("--max-turn-deg", type=float, default=None, help=_advanced_help("OmniNav waypoint max turn", expose_advanced))
-    parser.add_argument("--waypoint-hz-index", type=int, choices=[0, 1, 2, 3, 4], default=None, help=_advanced_help("OmniNav waypoint horizon index", expose_advanced))
-    parser.add_argument("--max-new-tokens", type=int, default=None, help=_advanced_help("OmniNav text mode max new tokens", expose_advanced))
-    parser.add_argument("--do-sample", action="store_true", help=_advanced_help("OmniNav text mode sampling", expose_advanced))
-    parser.add_argument("--temperature", type=float, default=None, help=_advanced_help("OmniNav text mode temperature", expose_advanced))
-    parser.add_argument("--quiet", action="store_true", help=_advanced_help("Reduce agent log output", expose_advanced))
-    parser.add_argument("--log-waypoint", action="store_true", help=_advanced_help("Print OmniNav waypoint debug logs", expose_advanced))
+    parser.add_argument(
+        "--inference-mode",
+        choices=["waypoint", "text"],
+        default=None,
+        help=_advanced_help("OmniNav inference mode", expose_advanced),
+    )
+    parser.add_argument(
+        "--attn-implementation",
+        type=str,
+        default=None,
+        help=_advanced_help("OmniNav attention implementation", expose_advanced),
+    )
+    parser.add_argument(
+        "--disable-multi-view",
+        action="store_true",
+        help=_advanced_help("Disable OmniNav multi-view sampling", expose_advanced),
+    )
+    parser.add_argument(
+        "--view-angles",
+        type=float,
+        nargs="+",
+        default=None,
+        help=_advanced_help("OmniNav multi-view angles", expose_advanced),
+    )
+    parser.add_argument(
+        "--view-settle-time",
+        type=float,
+        default=None,
+        help=_advanced_help("OmniNav view-settle time in seconds", expose_advanced),
+    )
+    parser.add_argument(
+        "--waypoint-dist-scale",
+        type=float,
+        default=None,
+        help=_advanced_help("OmniNav waypoint distance scale", expose_advanced),
+    )
+    parser.add_argument(
+        "--waypoint-speed-floor",
+        type=float,
+        default=None,
+        help=_advanced_help("OmniNav waypoint speed floor", expose_advanced),
+    )
+    parser.add_argument(
+        "--max-turn-deg",
+        type=float,
+        default=None,
+        help=_advanced_help("OmniNav waypoint max turn", expose_advanced),
+    )
+    parser.add_argument(
+        "--waypoint-hz-index",
+        type=int,
+        choices=[0, 1, 2, 3, 4],
+        default=None,
+        help=_advanced_help("OmniNav waypoint horizon index", expose_advanced),
+    )
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=None,
+        help=_advanced_help("OmniNav text mode max new tokens", expose_advanced),
+    )
+    parser.add_argument(
+        "--do-sample",
+        action="store_true",
+        help=_advanced_help("OmniNav text mode sampling", expose_advanced),
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=None,
+        help=_advanced_help("OmniNav text mode temperature", expose_advanced),
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help=_advanced_help("Reduce agent log output", expose_advanced),
+    )
+    parser.add_argument(
+        "--log-waypoint",
+        action="store_true",
+        help=_advanced_help("Print OmniNav waypoint debug logs", expose_advanced),
+    )
 
 
 def run_benchmark_from_args(
@@ -357,6 +658,8 @@ def run_benchmark_from_args(
         stage2_success_radius=getattr(args, "stage2_success_radius", 200.0),
         passthrough=getattr(args, "passthrough", False),
         save_frame_every=getattr(args, "save_frame_every", 5),
+        enable_nomad_diagnostics=args.enable_nomad_diagnostics,
+        diagnostic_tensor_every=args.diagnostic_tensor_every,
         save_video=getattr(args, "save_video", False),
         video_fps=getattr(args, "video_fps", 10),
         resume_jsonl=getattr(args, "resume_jsonl", None),
@@ -377,7 +680,7 @@ def run_benchmark_from_args(
             model_name=model_name,
             point_ids=getattr(args, "point_ids", None),
         )
-        print(f"\n{'='*60}\n BENCHMARK COMPLETED!\n{'='*60}")
+        print(f"\n{'=' * 60}\n BENCHMARK COMPLETED!\n{'=' * 60}")
         return result
     except KeyboardInterrupt:
         _cleanup()

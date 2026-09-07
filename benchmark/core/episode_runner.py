@@ -15,13 +15,17 @@ class EpisodeRunner:
     def __init__(self, benchmark):
         self.benchmark = benchmark
 
-    def run_episode(self, level: int, point_id: int, episode_id: int = 0) -> EpisodeMetrics:
+    def run_episode(
+        self, level: int, point_id: int, episode_id: int = 0
+    ) -> EpisodeMetrics:
         benchmark = self.benchmark
 
         task_context = benchmark.task_loader.build_task_context(level, point_id)
         benchmark._ensure_env(task_context["env_id"], level)
         benchmark.env_manager.apply_task_context(task_context)
-        time_limit = int(task_context.get("timeout", benchmark.TIME_LIMITS.get(level, 300)))
+        time_limit = int(
+            task_context.get("timeout", benchmark.TIME_LIMITS.get(level, 300))
+        )
 
         reference_image = None
         ref_img_path = task_context.get("reference_image_path")
@@ -32,22 +36,48 @@ class EpisodeRunner:
                 if reference_image is not None:
                     print(f"[RefImage] L{level} P{point_id} using: {ref_img_path}")
                 else:
-                    print(f"[RefImage] L{level} P{point_id} read failed: {ref_img_path}")
+                    print(
+                        f"[RefImage] L{level} P{point_id} read failed: {ref_img_path}"
+                    )
             else:
                 print(f"[RefImage] L{level} P{point_id} missing: {ref_img_path}")
         else:
-            print(f"[RefImage] L{level} P{point_id} no reference_image_path in env config")
+            print(
+                f"[RefImage] L{level} P{point_id} no reference_image_path in env config"
+            )
 
         benchmark.agent.prepare_episode(task_context)
+        reset_started = time.perf_counter()
         obs, info = benchmark.env.reset()
+        reset_ended = time.perf_counter()
         benchmark.agent.reset()
+        diagnostics = None
+        if benchmark.enable_nomad_diagnostics:
+            from core.nomad_diagnostics import NomadDiagnostics
+
+            if str(getattr(benchmark.agent, "model_name", "")).lower() != "nomad":
+                raise ValueError("--enable-nomad-diagnostics requires the nomad agent")
+            diagnostics = NomadDiagnostics(benchmark, level, point_id, episode_id)
+            benchmark.agent.diagnostics = diagnostics
+        observation_context = None
+        if diagnostics:
+            observation_context = {
+                "request_start_s": reset_started,
+                "return_s": reset_ended,
+                "time_scope": "reset call, not exact camera exposure",
+                "nearby_pose": diagnostics.pose(),
+            }
 
         progress_controller = ProgressTrackingController(benchmark, task_context)
-        state_controller = RescueStateMachineController(benchmark, task_context, progress_controller)
+        state_controller = RescueStateMachineController(
+            benchmark, task_context, progress_controller
+        )
         state_machine = state_controller.state_machine
 
         start_time = time.time()
-        initial_interaction_pos = benchmark.env_manager.get_current_interaction_position()
+        initial_interaction_pos = (
+            benchmark.env_manager.get_current_interaction_position()
+        )
         state_controller.reset(start_time)
         progress_controller.reset(initial_interaction_pos)
         if benchmark.enable_collision_detection and benchmark.collision_detector:
@@ -68,7 +98,9 @@ class EpisodeRunner:
         while True:
             current_time = time.time()
             elapsed_time = current_time - start_time
-            interaction_pos_before_step = benchmark.env_manager.get_current_interaction_position()
+            interaction_pos_before_step = (
+                benchmark.env_manager.get_current_interaction_position()
+            )
 
             state_controller.prepare_info(
                 info,
@@ -78,27 +110,55 @@ class EpisodeRunner:
                 point_id,
                 episode_id,
             )
-            step_obs, step_info = benchmark.agent.prepare_step_inputs(benchmark.env, obs, info)
+            step_obs, step_info = benchmark.agent.prepare_step_inputs(
+                benchmark.env, obs, info
+            )
+
+            if diagnostics:
+                diagnostics.begin(steps + 1, step_obs, observation_context)
 
             nav_action, extra_info = benchmark.agent.act(step_obs, step_info)
+            if diagnostics:
+                diagnostics.after_inference(nav_action, extra_info)
             drone_stage1_handoff = drone_stage1_handoff or bool(
                 extra_info.get("drone_stage1_handoff", False)
             )
             drone_stage2_handoff = drone_stage2_handoff or bool(
                 extra_info.get("drone_stage2_handoff", False)
             )
-            prev_state, final_action, phase_info, should_continue = state_controller.update_action(
-                nav_action,
-                info,
-                current_time,
-                interaction_pos_before_step,
+            prev_state, final_action, phase_info, should_continue = (
+                state_controller.update_action(
+                    nav_action,
+                    info,
+                    current_time,
+                    interaction_pos_before_step,
+                )
             )
-            env_action = benchmark.env_manager.compose_env_action(final_action, extra_info)
+            env_action = benchmark.env_manager.compose_env_action(
+                final_action, extra_info
+            )
+            if diagnostics:
+                diagnostics.before_send(final_action, env_action)
+            step_started = time.perf_counter()
             obs, reward, termination, truncation, info = benchmark.env.step(env_action)
-            state_controller.log_wait_confirm_transition(prev_state, level, point_id, episode_id)
+            step_ended = time.perf_counter()
+            if diagnostics:
+                observation_context = {
+                    "request_start_s": step_started,
+                    "return_s": step_ended,
+                    "time_scope": "env.step call, not exact camera exposure",
+                    "nearby_pose": diagnostics.pose(),
+                }
+                diagnostics.finish(observation_context)
+            state_controller.log_wait_confirm_transition(
+                prev_state, level, point_id, episode_id
+            )
             steps += 1
 
-            if benchmark.enable_trajectory_recording or benchmark.enable_path_similarity:
+            if (
+                benchmark.enable_trajectory_recording
+                or benchmark.enable_path_similarity
+            ):
                 trajectory.append(benchmark.env_manager.get_current_pose())
                 drone_pose = benchmark.env_manager.get_current_drone_pose()
                 if drone_pose is not None:
@@ -108,7 +168,9 @@ class EpisodeRunner:
                 interaction_pos,
                 state_controller.is_carrying(info),
             )
-            if not state_controller.validate_wait_confirm(interaction_pos, elapsed_time, steps):
+            if not state_controller.validate_wait_confirm(
+                interaction_pos, elapsed_time, steps
+            ):
                 break
             if benchmark.enable_collision_detection and benchmark.collision_detector:
                 if benchmark.collision_detector.check():
@@ -152,14 +214,20 @@ class EpisodeRunner:
             progress_metrics = dict(progress_metrics)
             progress_metrics["s1_score"] = 25.0 if drone_stage1_handoff else 0.0
             progress_metrics["s3_score"] = 25.0 if drone_stage2_handoff else 0.0
-            progress_metrics["stage1_score"] = progress_metrics["s1_score"] + progress_metrics["s2_score"]
-            progress_metrics["stage2_score"] = progress_metrics["s3_score"] + progress_metrics["s4_score"]
+            progress_metrics["stage1_score"] = (
+                progress_metrics["s1_score"] + progress_metrics["s2_score"]
+            )
+            progress_metrics["stage2_score"] = (
+                progress_metrics["s3_score"] + progress_metrics["s4_score"]
+            )
             progress_metrics["task_score"] = (
                 progress_metrics["stage1_score"] + progress_metrics["stage2_score"]
             )
         success = progress_metrics["task_completion"]
         control_loop_fps = float(steps / max(elapsed_time, 1e-6))
-        path_similarity = episode_path_similarity(benchmark, trajectory, level, point_id)
+        path_similarity = episode_path_similarity(
+            benchmark, trajectory, level, point_id
+        )
 
         metrics = EpisodeMetrics(
             episode_id=episode_id,
@@ -170,7 +238,9 @@ class EpisodeRunner:
             steps=steps,
             collision_count=collision_count,
             trajectory=trajectory if benchmark.enable_trajectory_recording else [],
-            drone_trajectory=drone_trajectory if benchmark.enable_trajectory_recording else [],
+            drone_trajectory=drone_trajectory
+            if benchmark.enable_trajectory_recording
+            else [],
             path_similarity=path_similarity,
             phase1_success=progress_metrics["stage1_success"],
             phase1_time=sm_metrics["phase1_time"],
@@ -207,4 +277,12 @@ class EpisodeRunner:
             episode_timeout=time_limit,
         )
         benchmark.agent.on_episode_end(success, metrics)
+        if diagnostics:
+            benchmark.agent.diagnostics = None
+            print(f"[NoMaD diagnostics] {diagnostics.root}")
+            print(
+                "Download this directory, then use the parent workspace entrypoint "
+                "scripts/plot_nomad_diagnostics.py with --steps, --run-config, "
+                "--asset-root and --output."
+            )
         return metrics

@@ -6,7 +6,7 @@
 
 import os
 import sys
-from typing import List, Dict, Any, Optional, Tuple, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 # --- 环境配置 ---
 np = __import__("numpy")
@@ -14,17 +14,17 @@ np.bool8 = np.bool_
 # 设置 UnrealEnv 路径 (根据你的实际路径修改)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 GYM_RESCUE_ROOT = os.path.dirname(SCRIPT_DIR)
-DEFAULT_UNREAL_ENV = '/media/littlecave/T9/UnrealEnv'
+DEFAULT_UNREAL_ENV = "/media/littlecave/T9/UnrealEnv"
 
-if 'UnrealEnv' not in os.environ:
-    os.environ['UnrealEnv'] = DEFAULT_UNREAL_ENV
+if "UnrealEnv" not in os.environ:
+    os.environ["UnrealEnv"] = DEFAULT_UNREAL_ENV
 
 # 添加gym-rescue到path
 if GYM_RESCUE_ROOT not in sys.path:
     sys.path.insert(0, GYM_RESCUE_ROOT)
 
 from agents.agent_base import BaseAgent
-from agents.factory import AGENT_REGISTRY, get_agent
+from agents.factory import AGENT_REGISTRY
 from core.benchmark_runner import BenchmarkRunner
 from core.env_manager import EnvManager
 from core.episode_runner import EpisodeRunner
@@ -32,39 +32,31 @@ from core.metrics import BenchmarkResult, EpisodeMetrics, LevelMetrics
 from core.result_writer import ResultWriter
 from core.resume import ResumeManager
 from core.task_loader import TaskLoader
-
+from utils.collision_detector import CollisionDetector  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # 1. 数据结构
 # ---------------------------------------------------------------------------
-
 # Re-exported for backward compatibility:
 # existing agents can still use ``from rescue_benchmark import EpisodeMetrics``.
-
-
 # ---------------------------------------------------------------------------
 # 2. Agent 基类
 # ---------------------------------------------------------------------------
-
 # Re-exported for backward compatibility:
 # existing agents can still use ``from rescue_benchmark import BaseAgent``.
-
-
 # ---------------------------------------------------------------------------
 # 4. 可选模块 (从 utils/ 导入)
 # ---------------------------------------------------------------------------
-
 from utils.path_similarity import PathSimilarityCalculator  # noqa: E402
-from utils.collision_detector import CollisionDetector       # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # 5. 核心评估器
 # ---------------------------------------------------------------------------
 
+
 class RescueBenchmark:
     """救援任务 Benchmark 评估器"""
-    
+
     # 时间限制配置 (秒)，与 gym_rescue/envs/setting/test_jsonl/level_*.jsonl 对齐
     TIME_LIMITS = {
         0: 180,  # L0: 3分钟
@@ -76,18 +68,18 @@ class RescueBenchmark:
 
     def __init__(
         self,
-        env_id: str = 'UnrealRescue-HongKongStreet',
+        env_id: str = "UnrealRescue-HongKongStreet",
         agent: BaseAgent = None,
         resolution: Tuple[int, int] = (320, 320),
         render: bool = False,
-        output_dir: str = './benchmark_results',
+        output_dir: str = "./benchmark_results",
         # 可选功能开关
         enable_collision_detection: bool = True,
         enable_trajectory_recording: bool = False,
         enable_path_similarity: bool = False,
         reference_trajectories: Optional[Dict[str, Any]] = None,
-        collision_method: str = 'api',
-        similarity_method: str = 'dtw',
+        collision_method: str = "api",
+        similarity_method: str = "dtw",
         # 状态机配置
         rescue_distance: float = 120.0,
         place_distance: float = 100.0,
@@ -105,17 +97,21 @@ class RescueBenchmark:
         video_fps: int = 10,
         # 断点续跑配置
         resume_jsonl: Optional[str] = None,
-        resume_skip: str = 'all',
+        resume_skip: str = "all",
         resume_append: bool = False,
         multiagent_env: bool = False,
         level_episode_timeouts: Optional[Dict[int, int]] = None,
+        enable_nomad_diagnostics: bool = False,
+        diagnostic_tensor_every: int = 5,
     ):
         self.env_id = env_id
         self.agent = agent
         self.resolution = resolution
         self.render = render
         self.output_dir = output_dir
-        
+        self.enable_nomad_diagnostics = enable_nomad_diagnostics
+        self.diagnostic_tensor_every = max(1, diagnostic_tensor_every)
+
         # 功能开关
         self.enable_collision_detection = enable_collision_detection
         self.enable_trajectory_recording = enable_trajectory_recording
@@ -123,7 +119,7 @@ class RescueBenchmark:
         self.reference_trajectories = reference_trajectories or {}
         self.collision_method = collision_method
         self.similarity_method = similarity_method
-        
+
         # 状态机配置
         self.rescue_distance = rescue_distance
         self.place_distance = place_distance
@@ -131,7 +127,7 @@ class RescueBenchmark:
         self.stage2_success_radius = stage2_success_radius
         self.passthrough = passthrough
         self.passthrough_env_term_geometry_sync = passthrough_env_term_geometry_sync
-        
+
         # 高级配置
         self.render_quality = render_quality
         self.offscreen = bool(offscreen)
@@ -142,7 +138,7 @@ class RescueBenchmark:
         self.resume_skip = resume_skip
         self.resume_append = bool(resume_append)
         self.multiagent_env = bool(multiagent_env)
-        
+
         self.env = None
         self.current_env_id = None
         self.current_level = None
@@ -173,25 +169,37 @@ class RescueBenchmark:
         self._runner = BenchmarkRunner(self)
 
         os.makedirs(output_dir, exist_ok=True)
-        self.resume_episode_records, self.resume_episode_keys = self.resume_manager.load()
-        
+        self.resume_episode_records, self.resume_episode_keys = (
+            self.resume_manager.load()
+        )
+
         # 打印配置
         self._print_config()
-    
+
     def _print_config(self):
         mode = "Passthrough" if self.passthrough else "Active"
-        sim = f", Similarity={self.similarity_method}({len(self.reference_trajectories)} refs)" if self.enable_path_similarity else ""
-        print(f"\n{'='*60}\n BENCHMARK CONFIG\n{'='*60}")
-        print(f" Env=Auto(from test_jsonl, fallback={self.env_id})  Res={self.resolution}  Render={self.render}")
+        sim = (
+            f", Similarity={self.similarity_method}({len(self.reference_trajectories)} refs)"
+            if self.enable_path_similarity
+            else ""
+        )
+        print(f"\n{'=' * 60}\n BENCHMARK CONFIG\n{'=' * 60}")
+        print(
+            f" Env=Auto(from test_jsonl, fallback={self.env_id})  Res={self.resolution}  Render={self.render}"
+        )
         if self.multiagent_env:
-            print(" MultiAgentEnv: ON (自动将 UnrealRescue-* 映射到 UnrealRescueMultiAgent-*)")
+            print(
+                " MultiAgentEnv: ON (自动将 UnrealRescue-* 映射到 UnrealRescueMultiAgent-*)"
+            )
         if self.task_loader.level_episode_timeouts:
             timeout_text = ", ".join(
                 f"L{level}={timeout}s"
                 for level, timeout in self.task_loader.level_episode_timeouts.items()
             )
             print(f" LevelEpisodeTimeouts: {timeout_text}")
-        print(f" Collision={self.enable_collision_detection}  Trajectory={self.enable_trajectory_recording}{sim}")
+        print(
+            f" Collision={self.enable_collision_detection}  Trajectory={self.enable_trajectory_recording}{sim}"
+        )
         print(
             f" StateMachine: {mode}  RescueXY={self.rescue_distance}cm  PlaceXY={self.place_distance}cm  "
             f"ZGate={self.interaction_z_threshold}cm  SuccessRadius={self.stage2_success_radius}cm(XY+Z)"
@@ -206,9 +214,11 @@ class RescueBenchmark:
                 f"Append={self.resume_append}  Loaded={len(self.resume_episode_keys)}"
             )
         if self.render:
-            print(f" RenderFrames: every {self.save_frame_every} steps  SaveVideo={self.save_video}  VideoFPS={self.video_fps}")
-        print(f" Output: {self.output_dir}\n{'='*60}\n")
-    
+            print(
+                f" RenderFrames: every {self.save_frame_every} steps  SaveVideo={self.save_video}  VideoFPS={self.video_fps}"
+            )
+        print(f" Output: {self.output_dir}\n{'=' * 60}\n")
+
     def _sync_env_state_from_manager(self):
         self.env = self.env_manager.env
         self.current_env_id = self.env_manager.current_env_id
@@ -229,7 +239,9 @@ class RescueBenchmark:
         if created and self.enable_collision_detection:
             self.collision_detector = CollisionDetector(self.env, self.collision_method)
 
-    def run_episode(self, level: int, point_id: int, episode_id: int = 0) -> EpisodeMetrics:
+    def run_episode(
+        self, level: int, point_id: int, episode_id: int = 0
+    ) -> EpisodeMetrics:
         return self.episode_runner.run_episode(level, point_id, episode_id)
 
     def evaluate_level(
@@ -262,6 +274,7 @@ class RescueBenchmark:
             point_ids=point_ids,
         )
 
+
 # ---------------------------------------------------------------------------
 # 6. Agent 注册与工厂 — 实现位于 agents.factory（向后兼容 re-export）
 # ---------------------------------------------------------------------------
@@ -273,7 +286,7 @@ _AGENT_REGISTRY = AGENT_REGISTRY
 # 7. CLI / 启动接口 — 实现位于 core.cli（供薄启动器与 __main__ 复用）
 # ---------------------------------------------------------------------------
 
-from core.cli import create_base_parser, main, run_benchmark_from_args  # noqa: E402
+from core.cli import main  # noqa: E402
 
 if __name__ == "__main__":
     main()
